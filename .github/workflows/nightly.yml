@@ -1,0 +1,49 @@
+name: Nightly Integration Tests
+
+on:
+  schedule:
+    - cron: "0 3 * * *"  # 3 AM UTC daily
+  workflow_dispatch: {}   # allow manual trigger
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pytest pyyaml
+
+      - name: Download Aleph CLI
+        run: |
+          mkdir -p bin
+          CLI_URL=$(python3 -c "
+          import yaml
+          with open('manifesto.yml') as f:
+              m = yaml.safe_load(f)
+          print(m['components']['aleph-cli']['url'])
+          ")
+          curl -fsSL "$CLI_URL" -o bin/aleph
+          chmod +x bin/aleph
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+
+      - name: Verify CLI works
+        run: aleph --version
+
+      - name: Run integration tests
+        env:
+          ALEPH_TESTNET_CCN_URL: ${{ secrets.TESTNET_CCN_URL }}
+          ALEPH_TESTNET_PRIVATE_KEY: ${{ secrets.TESTNET_PRIVATE_KEY }}
+        run: pytest --junitxml=results.xml -v
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: results.xml

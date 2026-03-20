@@ -1,0 +1,34 @@
+# manifesto.yml — Version pins for testnet components
+#
+# "components" are the software under test. PRs bump these.
+# "infrastructure" contains companion services that change infrequently.
+
+components:
+  pyaleph:
+    image: alephim/pyaleph-node
+    tag: "0.10.1-rc0"
+
+  p2p-service:
+    image: alephim/p2p-service
+    tag: "0.1.5"
+
+  aleph-cli:
+    version: "0.8.1"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.8.1/aleph-cli-linux-x86_64"
+
+infrastructure:
+  postgres:
+    image: postgres
+    tag: "15.3"
+  rabbitmq:
+    image: rabbitmq
+    tag: "3.11.15-management"
+  redis:
+    image: redis
+    tag: "8.4.0"
+  ipfs:
+    image: ipfs/kubo
+    tag: "v0.37.0"
+  anvil:
+    image: ghcr.io/foundry-rs/foundry
+    tag: "stable"

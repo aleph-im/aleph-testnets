@@ -1,0 +1,36 @@
+name: Deploy Testnet
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-testnet
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pyyaml
+        run: pip install pyyaml
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TESTNET_SSH_PRIVATE_KEY }}" > ~/.ssh/testnet_key
+          chmod 600 ~/.ssh/testnet_key
+
+      - name: Deploy
+        env:
+          TESTNET_HOST: ${{ secrets.TESTNET_HOST }}
+          TESTNET_USER: ${{ secrets.TESTNET_USER }}
+          SSH_KEY_FILE: ~/.ssh/testnet_key
+        run: bash deploy/deploy.sh

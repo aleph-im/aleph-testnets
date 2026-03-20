@@ -1,0 +1,132 @@
+volumes:
+  pyaleph-postgres:
+  pyaleph-rabbitmq:
+  pyaleph-redis:
+  pyaleph-ipfs:
+
+services:
+  pyaleph:
+    restart: always
+    image: ${PYALEPH_IMAGE}:${PYALEPH_TAG}
+    command: --config /opt/pyaleph/config.yml --key-dir /opt/pyaleph/keys -v
+    volumes:
+      - ./config.yml:/opt/pyaleph/config.yml:ro
+      - /etc/pyaleph/keys:/opt/pyaleph/keys
+      - /var/lib/pyaleph:/var/lib/pyaleph
+    depends_on:
+      - postgres
+      - ipfs
+      - p2p-service
+      - redis
+      - anvil
+    networks:
+      - pyaleph
+    logging:
+      options:
+        max-size: 50m
+
+  pyaleph-api:
+    restart: always
+    image: ${PYALEPH_IMAGE}:${PYALEPH_TAG}
+    command: --config /opt/pyaleph/config.yml --key-dir /opt/pyaleph/keys -v
+    entrypoint: ["bash", "deployment/scripts/run_aleph_ccn_api.sh"]
+    ports:
+      - "4024:4024/tcp"
+    volumes:
+      - ./config.yml:/opt/pyaleph/config.yml:ro
+      - /var/lib/pyaleph:/var/lib/pyaleph
+    environment:
+      CCN_CONFIG_API_PORT: 4024
+      CCN_CONFIG_API_NB_WORKERS: 4
+    depends_on:
+      - pyaleph
+    networks:
+      - pyaleph
+    logging:
+      options:
+        max-size: 50m
+
+  p2p-service:
+    restart: always
+    image: ${P2P_SERVICE_IMAGE}:${P2P_SERVICE_TAG}
+    networks:
+      - pyaleph
+    volumes:
+      - ./config.yml:/etc/p2p-service/config.yml:ro
+      - /etc/pyaleph/keys/node-secret.pkcs8.der:/etc/p2p-service/node-secret.pkcs8.der:ro
+    depends_on:
+      - rabbitmq
+    environment:
+      RUST_LOG: info
+    ports:
+      - "4025:4025"
+      - "127.0.0.1:4030:4030"
+    command:
+      - "--config"
+      - "/etc/p2p-service/config.yml"
+      - "--private-key-file"
+      - "/etc/p2p-service/node-secret.pkcs8.der"
+
+  postgres:
+    restart: always
+    image: ${POSTGRES_IMAGE}:${POSTGRES_TAG}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pyaleph-postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: aleph
+      POSTGRES_PASSWORD: decentralize-everything
+      POSTGRES_DB: aleph
+    networks:
+      - pyaleph
+    shm_size: "2gb"
+
+  rabbitmq:
+    restart: always
+    image: ${RABBITMQ_IMAGE}:${RABBITMQ_TAG}
+    networks:
+      - pyaleph
+    environment:
+      RABBITMQ_DEFAULT_USER: aleph-p2p
+      RABBITMQ_DEFAULT_PASS: change-me!
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - pyaleph-rabbitmq:/var/lib/rabbitmq
+
+  redis:
+    restart: always
+    image: ${REDIS_IMAGE}:${REDIS_TAG}
+    networks:
+      - pyaleph
+    volumes:
+      - pyaleph-redis:/data
+
+  ipfs:
+    restart: always
+    image: ${IPFS_IMAGE}:${IPFS_TAG}
+    ports:
+      - "4001:4001"
+      - "4001:4001/udp"
+      - "127.0.0.1:5001:5001"
+    volumes:
+      - pyaleph-ipfs:/data/ipfs
+      - ./001-update-ipfs-config.sh:/container-init.d/001-update-ipfs-config.sh:ro
+    environment:
+      - IPFS_PROFILE=server
+      - IPFS_TELEMETRY=off
+    networks:
+      - pyaleph
+    command: ["daemon", "--enable-pubsub-experiment", "--enable-gc", "--migrate"]
+
+  anvil:
+    restart: always
+    image: ${ANVIL_IMAGE}:${ANVIL_TAG}
+    networks:
+      - pyaleph
+    entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545"]
+
+networks:
+  pyaleph:

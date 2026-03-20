@@ -1,0 +1,12 @@
+[project]
+name = "aleph-testnets"
+version = "0.1.0"
+description = "Integration tests for Aleph Cloud testnets"
+requires-python = ">=3.10"
+dependencies = [
+    "pytest>=8.0",
+    "pyyaml>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

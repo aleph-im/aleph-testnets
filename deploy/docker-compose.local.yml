@@ -1,0 +1,21 @@
+# Local development overrides — remaps host paths to .local/ under the repo
+# so no sudo or system directories are needed.
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+
+services:
+  pyaleph:
+    volumes:
+      - ./config.yml:/opt/pyaleph/config.yml:ro
+      - ../.local/keys:/opt/pyaleph/keys
+      - ../.local/storage:/var/lib/pyaleph
+
+  pyaleph-api:
+    volumes:
+      - ./config.yml:/opt/pyaleph/config.yml:ro
+      - ../.local/storage:/var/lib/pyaleph
+
+  p2p-service:
+    volumes:
+      - ./config.yml:/etc/p2p-service/config.yml:ro
+      - ../.local/keys/node-secret.pkcs8.der:/etc/p2p-service/node-secret.pkcs8.der:ro

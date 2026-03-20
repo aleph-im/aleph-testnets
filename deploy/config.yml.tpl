@@ -1,0 +1,65 @@
+---
+ethereum:
+  enabled: true
+  api_url: http://anvil:8545
+  chain_id: 31337
+  packing_node: false
+  sync_contract: "0x0000000000000000000000000000000000000000"
+  start_height: 0
+
+nuls2:
+  enabled: false
+
+bsc:
+  enabled: false
+
+tezos:
+  enabled: false
+
+postgres:
+  host: postgres
+  port: 5432
+  database: aleph
+  user: aleph
+  password: decentralize-everything
+
+storage:
+  store_files: true
+  engine: filesystem
+  folder: /var/lib/pyaleph
+
+ipfs:
+  alive_topic: ALEPH_TESTNET_ALIVE
+  enabled: true
+  host: ipfs
+  port: 5001
+  gateway_port: 8080
+  peers: []
+
+aleph:
+  queue_topic: ALEPH_TESTNET_TEST
+
+p2p:
+  daemon_host: p2p-service
+  http_port: 4024
+  port: 4025
+  control_port: 4030
+  reconnect_delay: 60
+  peers: []
+  topics:
+    - ALEPH_TESTNET_ALIVE
+    - ALEPH_TESTNET_TEST
+  alive_topic: ALEPH_TESTNET_ALIVE
+
+rabbitmq:
+  host: rabbitmq
+  port: 5672
+  username: aleph-p2p
+  password: change-me!
+
+redis:
+  host: redis
+  port: 6379
+
+sentry:
+  dsn: ""

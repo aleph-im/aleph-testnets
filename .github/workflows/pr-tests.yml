@@ -46,6 +46,7 @@ jobs:
             testnets-pr-${{ github.event.number }}-${{ github.run_id }}
 
       - name: Get Droplet IP
+        timeout-minutes: 2
         run: |
           DROPLET_NAME="testnets-pr-${{ github.event.number }}-${{ github.run_id }}"
           until DROPLET_IPV4=$(doctl compute droplet get "$DROPLET_NAME" --format PublicIPv4 --no-header 2>/dev/null) && [ -n "$DROPLET_IPV4" ]; do

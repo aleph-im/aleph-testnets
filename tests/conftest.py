@@ -84,3 +84,87 @@ def tmp_file(tmp_path):
     f = tmp_path / "testfile.bin"
     f.write_bytes(os.urandom(1024))
     return f
+
+
+@pytest.fixture(scope="session")
+def contracts():
+    """Load deployed contract addresses from .local/contracts.json."""
+    path = os.environ.get("ALEPH_TESTNET_CONTRACTS_JSON", "")
+    if not path or not os.path.exists(path):
+        pytest.skip("No contracts.json — credits tests require deployed contracts")
+    with open(path) as f:
+        return json.load(f)
+
+
+@pytest.fixture(scope="session")
+def indexer_url() -> str:
+    return os.environ.get("ALEPH_TESTNET_INDEXER_URL", "http://localhost:8081")
+
+
+@pytest.fixture(scope="session")
+def anvil_rpc() -> str:
+    return os.environ.get("ALEPH_TESTNET_ANVIL_RPC", "http://localhost:8545")
+
+
+@pytest.fixture(scope="session")
+def indexer_graphql(indexer_url: str):
+    """Return a function that queries the indexer's GraphQL endpoint."""
+    def query(graphql_query: str, variables: dict | None = None) -> dict:
+        payload = json.dumps({"query": graphql_query, "variables": variables or {}})
+        req = urllib.request.Request(
+            f"{indexer_url}/graphql",
+            data=payload.encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        resp = urllib.request.urlopen(req, timeout=10)
+        return json.loads(resp.read())
+    return query
+
+
+@pytest.fixture(scope="session")
+def cast_send(anvil_rpc: str):
+    """Return a function that runs cast send against Anvil."""
+    def send(
+        to: str,
+        sig: str,
+        *args: str,
+        private_key: str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        value: str | None = None,
+    ) -> subprocess.CompletedProcess:
+        cmd = [
+            "cast", "send",
+            "--rpc-url", anvil_rpc,
+            "--private-key", private_key,
+            to, sig, *args,
+        ]
+        if value:
+            cmd.extend(["--value", value])
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            pytest.fail(
+                f"cast send failed: {' '.join(cmd)}\n"
+                f"Stdout: {result.stdout}\n"
+                f"Stderr: {result.stderr}"
+            )
+        return result
+    return send
+
+
+@pytest.fixture(scope="session")
+def cast_call(anvil_rpc: str):
+    """Return a function that runs cast call (read-only) against Anvil."""
+    def call(to: str, sig: str, *args: str) -> str:
+        cmd = [
+            "cast", "call",
+            "--rpc-url", anvil_rpc,
+            to, sig, *args,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            pytest.fail(
+                f"cast call failed: {' '.join(cmd)}\n"
+                f"Stdout: {result.stdout}\n"
+                f"Stderr: {result.stderr}"
+            )
+        return result.stdout.strip()
+    return call

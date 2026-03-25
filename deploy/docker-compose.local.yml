@@ -19,3 +19,7 @@ services:
     volumes:
       - ./config.yml:/etc/p2p-service/config.yml:ro
       - ../.local/keys/node-secret.pkcs8.der:/etc/p2p-service/node-secret.pkcs8.der:ro
+
+  anvil:
+    ports:
+      - "127.0.0.1:8545:8545"

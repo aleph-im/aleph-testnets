@@ -61,12 +61,12 @@ fi
 
 # Parse addresses and convert to checksummed format (ethers.js uses checksummed)
 USDALEPH_ADDR=$(jq -r '[.transactions[] | select(.contractName == "USDAleph" and .transactionType == "CREATE")] | first | .contractAddress' "$BROADCAST")
-USDALEPH_ADDR=$(cast to-check-sum-address "$USDALEPH_ADDR")
+USDALEPH_ADDR=$(foundry_run cast to-check-sum-address "$USDALEPH_ADDR")
 MOCKALEPH_ADDR=$(jq -r '[.transactions[] | select(.contractName == "MockALEPH" and .transactionType == "CREATE")] | first | .contractAddress' "$BROADCAST")
-MOCKALEPH_ADDR=$(cast to-check-sum-address "$MOCKALEPH_ADDR")
+MOCKALEPH_ADDR=$(foundry_run cast to-check-sum-address "$MOCKALEPH_ADDR")
 # The proxy is ERC1967Proxy — that's the credit contract address
 CREDIT_ADDR=$(jq -r '[.transactions[] | select(.contractName == "ERC1967Proxy" and .transactionType == "CREATE")] | first | .contractAddress' "$BROADCAST")
-CREDIT_ADDR=$(cast to-check-sum-address "$CREDIT_ADDR")
+CREDIT_ADDR=$(foundry_run cast to-check-sum-address "$CREDIT_ADDR")
 
 if [ -z "$USDALEPH_ADDR" ] || [ -z "$MOCKALEPH_ADDR" ] || [ -z "$CREDIT_ADDR" ]; then
     echo "ERROR: Failed to parse contract addresses from broadcast"

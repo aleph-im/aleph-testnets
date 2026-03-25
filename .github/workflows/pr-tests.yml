@@ -1,0 +1,137 @@
+name: PR Integration Tests
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-tests-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: digitalocean
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DIGITALOCEAN_SSH_PRIVATE_KEY }}" | base64 --decode > ~/.ssh/id_ed25519
+          chmod 0700 ~/.ssh
+          chmod 0600 ~/.ssh/id_ed25519
+
+      - name: Create Droplet
+        run: |
+          doctl compute droplet create \
+            --image ubuntu-24-04-x64 \
+            --size s-4vcpu-8gb \
+            --region ams3 \
+            --ssh-keys ${{ vars.DO_SSH_KEY_FINGERPRINT }} \
+            --tag-name testnets-ci \
+            --wait \
+            testnets-pr-${{ github.event.number }}-${{ github.run_id }}
+
+      - name: Get Droplet IP
+        timeout-minutes: 2
+        run: |
+          DROPLET_NAME="testnets-pr-${{ github.event.number }}-${{ github.run_id }}"
+          until DROPLET_IPV4=$(doctl compute droplet get "$DROPLET_NAME" --format PublicIPv4 --no-header 2>/dev/null) && [ -n "$DROPLET_IPV4" ]; do
+            sleep 2
+          done
+          echo "DROPLET_IPV4=$DROPLET_IPV4" >> "$GITHUB_ENV"
+          echo "DROPLET_NAME=$DROPLET_NAME" >> "$GITHUB_ENV"
+          echo "Droplet IP: $DROPLET_IPV4"
+
+      - name: Wait for SSH
+        timeout-minutes: 3
+        run: |
+          until ssh-keyscan -H "$DROPLET_IPV4" >> ~/.ssh/known_hosts 2>/dev/null; do
+            sleep 3
+          done
+
+      - name: Install system dependencies
+        run: |
+          # Wait for cloud-init / unattended-upgrades to finish
+          ssh root@${DROPLET_IPV4} "cloud-init status --wait || true"
+          ssh root@${DROPLET_IPV4} "while fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 2; done"
+          ssh root@${DROPLET_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
+          ssh root@${DROPLET_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io docker-compose-v2 python3-pip jq curl"
+
+      - name: Install Foundry
+        # Needed on the host for test fixtures (cast_send/cast_call in conftest.py).
+        # Contract deployment uses the Docker container, but tests invoke cast directly.
+        run: |
+          ssh root@${DROPLET_IPV4} "curl -L https://foundry.paradigm.xyz | bash"
+          ssh root@${DROPLET_IPV4} "/root/.foundry/bin/foundryup"
+          # Symlink to /usr/local/bin so cast/forge are on PATH for non-interactive SSH
+          ssh root@${DROPLET_IPV4} "ln -sf /root/.foundry/bin/cast /usr/local/bin/cast"
+          ssh root@${DROPLET_IPV4} "ln -sf /root/.foundry/bin/forge /usr/local/bin/forge"
+
+      - name: Rsync repo to Droplet
+        run: |
+          rsync -az \
+            --exclude .git \
+            --exclude contracts/out \
+            --exclude contracts/cache \
+            --exclude contracts/broadcast \
+            --exclude .worktrees \
+            --exclude bin \
+            --exclude .local \
+            --exclude __pycache__ \
+            -e ssh \
+            ./ root@${DROPLET_IPV4}:/opt/aleph-testnets/
+
+      - name: Setup environment
+        run: |
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --env"
+
+      - name: Start stack
+        run: |
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --up"
+
+      - name: Deploy contracts and start indexer
+        run: |
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --deploy-contracts"
+
+      - name: Run tests
+        run: |
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --test"
+
+      - name: Collect test results
+        if: always()
+        run: |
+          scp root@${DROPLET_IPV4}:/opt/aleph-testnets/results.xml ./results.xml 2>/dev/null || true
+
+      - name: Collect container logs
+        if: always()
+        run: |
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --logs" > docker-logs.txt 2>&1 || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            results.xml
+            docker-logs.txt
+
+      - name: Destroy Droplet
+        if: always()
+        run: |
+          doctl compute droplet delete --force "$DROPLET_NAME" || true

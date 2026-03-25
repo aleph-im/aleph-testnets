@@ -3,10 +3,13 @@
 # All data is stored under .local/ in the repo — no sudo needed.
 #
 # Usage:
-#   ./scripts/local-up.sh          # start stack + run tests
-#   ./scripts/local-up.sh --up     # start stack only
-#   ./scripts/local-up.sh --down   # tear down stack
-#   ./scripts/local-up.sh --test   # run tests only (stack must be running)
+#   ./scripts/local-up.sh                   # full run: env → up → deploy → test
+#   ./scripts/local-up.sh --env             # generate .env, install deps, download CLI
+#   ./scripts/local-up.sh --up              # start containers, wait for CCN
+#   ./scripts/local-up.sh --deploy-contracts # deploy contracts, start indexer, fund accounts
+#   ./scripts/local-up.sh --test            # run pytest (extra args passed through)
+#   ./scripts/local-up.sh --logs            # dump all container logs
+#   ./scripts/local-up.sh --down            # tear down stack and wipe state
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,7 +23,11 @@ COMPOSE_FILES=(-f "$DEPLOY_DIR/docker-compose.yml" -f "$DEPLOY_DIR/docker-compos
 # Use a test private key (arbitrary, no real funds needed)
 TEST_PRIVATE_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-generate_env() {
+setup_env() {
+    echo "==> Installing Python dependencies..."
+    export PIP_BREAK_SYSTEM_PACKAGES=1
+    pip install "$REPO_ROOT"
+
     echo "==> Generating .env from manifesto..."
     python3 -c "
 import yaml
@@ -33,9 +40,7 @@ for section in ('components', 'infrastructure'):
             print(f'{prefix}_IMAGE={info[\"image\"]}')
             print(f'{prefix}_TAG={info[\"tag\"]}')
 " > "$DEPLOY_DIR/.env"
-}
 
-download_cli() {
     if [ -x "$BIN_DIR/aleph" ]; then
         echo "==> CLI binary already exists at $BIN_DIR/aleph"
         return
@@ -69,9 +74,6 @@ wait_for_ccn() {
 }
 
 stack_up() {
-    generate_env
-    download_cli
-
     # Source .env so image tags are available for key generation
     set -a
     source "$DEPLOY_DIR/.env"
@@ -88,6 +90,7 @@ stack_up() {
     if [ ! -f "$LOCAL_DIR/keys/node-secret.pkcs8.der" ]; then
         echo "==> Generating P2P keys..."
         docker run --rm \
+            --user root \
             -v "$LOCAL_DIR/keys:/opt/pyaleph/keys" \
             --entrypoint pyaleph \
             "${PYALEPH_IMAGE}:${PYALEPH_TAG}" \
@@ -98,7 +101,9 @@ stack_up() {
     docker compose "${COMPOSE_FILES[@]}" up -d
 
     wait_for_ccn
+}
 
+deploy_contracts() {
     # Export compose files as a space-separated string for child scripts
     export COMPOSE_FILES_STR="${COMPOSE_FILES[*]}"
 
@@ -128,6 +133,26 @@ stack_up() {
     "$REPO_ROOT/scripts/fund-test-accounts.sh"
 }
 
+run_tests() {
+    echo "==> Running integration tests..."
+    export PATH="$BIN_DIR:$PATH"
+    export ALEPH_TESTNET_CCN_URL="$CCN_URL"
+    export ALEPH_TESTNET_PRIVATE_KEY="$TEST_PRIVATE_KEY"
+    export ALEPH_TESTNET_INDEXER_URL="http://localhost:8081"
+    export ALEPH_TESTNET_CONTRACTS_JSON="$LOCAL_DIR/contracts.json"
+    export ALEPH_TESTNET_ANVIL_RPC="http://localhost:8545"
+    cd "$REPO_ROOT"
+    pytest -v --junitxml=results.xml "$@"
+}
+
+dump_logs() {
+    echo "==> Dumping container logs..."
+    for svc in $(docker compose "${COMPOSE_FILES[@]}" --profile credits config --services 2>/dev/null); do
+        echo "===== $svc ====="
+        docker compose "${COMPOSE_FILES[@]}" --profile credits logs --no-color --tail=200 "$svc" 2>/dev/null || true
+    done
+}
+
 stack_down() {
     echo "==> Stopping CCN stack..."
     docker compose "${COMPOSE_FILES[@]}" --profile credits down -v || true
@@ -138,36 +163,38 @@ stack_down() {
     echo "==> Stack stopped and state wiped."
 }
 
-run_tests() {
-    download_cli
-    echo "==> Running integration tests..."
-    export PATH="$BIN_DIR:$PATH"
-    export ALEPH_TESTNET_CCN_URL="$CCN_URL"
-    export ALEPH_TESTNET_PRIVATE_KEY="$TEST_PRIVATE_KEY"
-    export ALEPH_TESTNET_INDEXER_URL="http://localhost:8081"
-    export ALEPH_TESTNET_CONTRACTS_JSON="$LOCAL_DIR/contracts.json"
-    export ALEPH_TESTNET_ANVIL_RPC="http://localhost:8545"
-    cd "$REPO_ROOT"
-    pytest -v "$@"
-}
-
 case "${1:-}" in
+    --env)
+        setup_env
+        ;;
     --up)
         stack_up
         ;;
-    --down)
-        stack_down
+    --deploy-contracts)
+        deploy_contracts
         ;;
     --test)
         shift
         run_tests "$@"
         ;;
+    --logs)
+        dump_logs
+        ;;
+    --down)
+        stack_down
+        ;;
     "")
+        setup_env
         stack_up
+        deploy_contracts
         run_tests
         ;;
+    --help|-h)
+        echo "Usage: $0 [--env|--up|--deploy-contracts|--test|--logs|--down]"
+        exit 0
+        ;;
     *)
-        echo "Usage: $0 [--up|--down|--test]"
+        echo "Usage: $0 [--env|--up|--deploy-contracts|--test|--logs|--down]"
         exit 1
         ;;
 esac

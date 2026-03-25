@@ -1,0 +1,3 @@
+[submodule "contracts/lib/aleph-contract-eth-credit"]
+	path = contracts/lib/aleph-contract-eth-credit
+	url = https://github.com/aleph-im/aleph-contract-eth-credit

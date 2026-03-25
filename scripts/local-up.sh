@@ -90,6 +90,7 @@ stack_up() {
     if [ ! -f "$LOCAL_DIR/keys/node-secret.pkcs8.der" ]; then
         echo "==> Generating P2P keys..."
         docker run --rm \
+            --user root \
             -v "$LOCAL_DIR/keys:/opt/pyaleph/keys" \
             --entrypoint pyaleph \
             "${PYALEPH_IMAGE}:${PYALEPH_TAG}" \

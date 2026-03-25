@@ -25,8 +25,8 @@ TEST_PRIVATE_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 setup_env() {
     echo "==> Installing Python dependencies..."
-    PIP_BREAK_SYSTEM_PACKAGES=1 pip install "$REPO_ROOT" 2>/dev/null \
-        || pip install "$REPO_ROOT"
+    export PIP_BREAK_SYSTEM_PACKAGES=1
+    pip install "$REPO_ROOT"
 
     echo "==> Generating .env from manifesto..."
     python3 -c "

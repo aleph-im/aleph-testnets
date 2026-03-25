@@ -7,3 +7,9 @@ results.xml
 .local/
 deploy/config.yml
 .worktrees/
+contracts/out/
+contracts/cache/
+contracts/lib/
+contracts/broadcast/
+deploy/indexer/chains.yaml
+deploy/indexer/abis/

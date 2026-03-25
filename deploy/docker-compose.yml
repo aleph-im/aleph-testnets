@@ -126,7 +126,38 @@ services:
     image: ${ANVIL_IMAGE}:${ANVIL_TAG}
     networks:
       - pyaleph
-    entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545"]
+    entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--code-size-limit", "100000"]
+
+  indexer:
+    restart: always
+    image: ${INDEXER_IMAGE}:${INDEXER_TAG}
+    environment:
+      INDEXER: aleph-credit
+      INDEXER_BLOCKCHAINS: ethereum
+      INDEXER_MIN_BLOCK_HEIGHT: "0"
+      INDEXER_API_PORT: "8081"
+      INDEXER_NAMESPACE: aleph-credit
+      INDEXER_CHAINS_CONFIG: /config/chains.yaml
+      ETHEREUM_RPC: http://anvil:8545
+      ETHEREUM_EXPLORER_URL: "http://localhost:0"
+      ALEPH_HOST: http://pyaleph-api:4024
+      ALEPH_PAYMENT_CHANNEL: ALEPH_TESTNET_CREDIT
+      ALEPH_PAYMENT_ADDRESS: ${CREDIT_SENDER_ADDRESS}
+    volumes:
+      - ./indexer/chains.yaml:/config/chains.yaml:ro
+      - ./indexer/abis:/app/config/abis:ro
+    ports:
+      - "127.0.0.1:8081:8081"
+    depends_on:
+      - anvil
+      - pyaleph-api
+    profiles:
+      - credits
+    networks:
+      - pyaleph
+    logging:
+      options:
+        max-size: 50m
 
 networks:
   pyaleph:

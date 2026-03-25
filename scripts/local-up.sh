@@ -98,13 +98,43 @@ stack_up() {
     docker compose "${COMPOSE_FILES[@]}" up -d
 
     wait_for_ccn
+
+    # Export compose files as a space-separated string for child scripts
+    export COMPOSE_FILES_STR="${COMPOSE_FILES[*]}"
+
+    # Deploy contracts on Anvil
+    echo "==> Deploying contracts on Anvil..."
+    "$REPO_ROOT/scripts/deploy-contracts.sh"
+
+    # Start the indexer (uses 'credits' profile)
+    echo "==> Starting indexer..."
+    docker compose "${COMPOSE_FILES[@]}" --profile credits up -d indexer
+
+    # Wait for indexer to be ready
+    echo "==> Waiting for indexer..."
+    for i in $(seq 1 24); do
+        if curl -sf "http://localhost:8081" > /dev/null 2>&1; then
+            echo "==> Indexer is ready!"
+            break
+        fi
+        if [ "$i" -eq 24 ]; then
+            echo "WARNING: Indexer may not be ready (120s timeout)"
+        fi
+        sleep 5
+    done
+
+    # Fund test accounts
+    echo "==> Funding test accounts..."
+    "$REPO_ROOT/scripts/fund-test-accounts.sh"
 }
 
 stack_down() {
     echo "==> Stopping CCN stack..."
-    docker compose "${COMPOSE_FILES[@]}" down -v || true
+    docker compose "${COMPOSE_FILES[@]}" --profile credits down -v || true
     rm -rf "$LOCAL_DIR"
     rm -f "$DEPLOY_DIR/.env" "$DEPLOY_DIR/config.yml"
+    rm -rf "$DEPLOY_DIR/indexer"
+    rm -rf "$REPO_ROOT/contracts/broadcast"
     echo "==> Stack stopped and state wiped."
 }
 
@@ -114,6 +144,9 @@ run_tests() {
     export PATH="$BIN_DIR:$PATH"
     export ALEPH_TESTNET_CCN_URL="$CCN_URL"
     export ALEPH_TESTNET_PRIVATE_KEY="$TEST_PRIVATE_KEY"
+    export ALEPH_TESTNET_INDEXER_URL="http://localhost:8081"
+    export ALEPH_TESTNET_CONTRACTS_JSON="$LOCAL_DIR/contracts.json"
+    export ALEPH_TESTNET_ANVIL_RPC="http://localhost:8545"
     cd "$REPO_ROOT"
     pytest -v "$@"
 }

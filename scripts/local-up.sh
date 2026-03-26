@@ -81,7 +81,6 @@ stack_up() {
 
     # Create local data directories
     mkdir -p "$LOCAL_DIR/keys"
-    mkdir -p "$LOCAL_DIR/storage"
 
     # Copy config
     cp "$DEPLOY_DIR/config.yml.tpl" "$DEPLOY_DIR/config.yml"

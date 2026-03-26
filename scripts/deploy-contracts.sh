@@ -129,6 +129,7 @@ echo "==> Copied ABIs to $ABI_DIR/"
 # Append addresses to .env for docker-compose variable substitution
 if ! grep -q "CREDIT_SENDER_ADDRESS" "$DEPLOY_DIR/.env" 2>/dev/null; then
     echo "CREDIT_SENDER_ADDRESS=$DEPLOYER_ADDR" >> "$DEPLOY_DIR/.env"
+    echo "CREDIT_SENDER_PRIVATE_KEY=$DEPLOYER_KEY" >> "$DEPLOY_DIR/.env"
 fi
 if ! grep -q "USDALEPH_ADDRESS" "$DEPLOY_DIR/.env" 2>/dev/null; then
     echo "USDALEPH_ADDRESS=$USDALEPH_ADDR" >> "$DEPLOY_DIR/.env"

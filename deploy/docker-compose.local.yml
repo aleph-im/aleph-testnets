@@ -23,8 +23,3 @@ services:
   anvil:
     ports:
       - "127.0.0.1:8545:8545"
-
-  credit-service:
-    build:
-      context: ../../aleph-api-credit
-      dockerfile: Dockerfile

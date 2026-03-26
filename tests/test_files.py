@@ -3,6 +3,9 @@ import uuid
 
 import pytest
 
+# Anvil account #1 — primary test account (see scripts/fund-test-accounts.sh)
+TEST_ADDR = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+
 
 def test_file_upload_and_download(aleph_cli, tmp_file, tmp_path):
     """Upload a file and download it by hash, compare bytes."""
@@ -13,7 +16,7 @@ def test_file_upload_and_download(aleph_cli, tmp_file, tmp_path):
     time.sleep(2)
 
     out = tmp_path / "downloaded.bin"
-    aleph_cli("file", "download", "--hash", file_hash, "--output", str(out))
+    aleph_cli("file", "download", file_hash, "--output", str(out))
     assert out.read_bytes() == tmp_file.read_bytes(), "Downloaded file should match uploaded file"
 
 
@@ -26,5 +29,5 @@ def test_file_upload_with_ref(aleph_cli, tmp_file, tmp_path):
     time.sleep(2)
 
     out = tmp_path / "downloaded_ref.bin"
-    aleph_cli("file", "download", "--ref", ref, "--output", str(out))
+    aleph_cli("file", "download", "--ref", ref, "--owner", TEST_ADDR, "--output", str(out))
     assert out.read_bytes() == tmp_file.read_bytes(), "Downloaded file should match uploaded file"

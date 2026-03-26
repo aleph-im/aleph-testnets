@@ -126,9 +126,18 @@ jq '.abi' "$CONTRACTS_DIR/out/MockALEPH.sol/MockALEPH.json" > "$ABI_DIR/${MOCKAL
 jq '.abi' "$CONTRACTS_DIR/out/AlephPaymentProcessor.sol/AlephPaymentProcessor.json" > "$ABI_DIR/${CREDIT_LOWER}.json"
 echo "==> Copied ABIs to $ABI_DIR/"
 
-# Append CREDIT_SENDER_ADDRESS to .env if not already present
+# Append addresses to .env for docker-compose variable substitution
 if ! grep -q "CREDIT_SENDER_ADDRESS" "$DEPLOY_DIR/.env" 2>/dev/null; then
     echo "CREDIT_SENDER_ADDRESS=$DEPLOYER_ADDR" >> "$DEPLOY_DIR/.env"
+fi
+if ! grep -q "USDALEPH_ADDRESS" "$DEPLOY_DIR/.env" 2>/dev/null; then
+    echo "USDALEPH_ADDRESS=$USDALEPH_ADDR" >> "$DEPLOY_DIR/.env"
+    echo "MOCKALEPH_ADDRESS=$MOCKALEPH_ADDR" >> "$DEPLOY_DIR/.env"
+    echo "CREDIT_CONTRACT_ADDRESS=$CREDIT_ADDR" >> "$DEPLOY_DIR/.env"
+    # Set distribution start date to "now" so the credit service's start date
+    # falls within the indexer's processed range (Anvil has no old blocks).
+    DISTRIBUTION_START_MS=$(date +%s)000
+    echo "DISTRIBUTION_START_DATE=$DISTRIBUTION_START_MS" >> "$DEPLOY_DIR/.env"
 fi
 
 echo "==> Contract deployment complete!"

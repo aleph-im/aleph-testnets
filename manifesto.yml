@@ -20,6 +20,10 @@ components:
     image: alephim/credit-indexer
     tag: "latest"
 
+  credit-service:
+    image: alephim/credit-service
+    tag: "latest"
+
 infrastructure:
   postgres:
     image: postgres

@@ -28,7 +28,6 @@ def test_post_create_and_list(aleph_cli, unique_channel):
     assert item_hash in hashes, f"Created post {item_hash} should appear in channel listing"
 
 
-@pytest.mark.xfail(reason="CLI bug: amend doesn't include 'type' field in content, CCN rejects with InvalidMessageFormat")
 def test_post_amend(aleph_cli, unique_channel):
     """Create a post, amend it, verify updated content."""
     original = '{"body": "original"}'

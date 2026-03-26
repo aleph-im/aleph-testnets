@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .env
 *.egg-info/
+.venv/
 bin/
 results.xml
 .local/

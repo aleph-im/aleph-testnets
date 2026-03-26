@@ -24,7 +24,7 @@ fi
 # Helper: run forge/cast inside the Foundry container on the pyaleph network
 foundry_run() {
     docker compose "${COMPOSE_FILES[@]}" run --rm \
-        --user root \
+        --user "$(id -u):$(id -g)" \
         -v "$CONTRACTS_DIR:/contracts" \
         -w /contracts \
         -e DEPLOYER_PRIVATE_KEY="$DEPLOYER_KEY" \

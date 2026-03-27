@@ -3,17 +3,20 @@
 #
 # Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 
+volumes:
+  pyaleph-local-storage:
+
 services:
   pyaleph:
     volumes:
       - ./config.yml:/opt/pyaleph/config.yml:ro
       - ../.local/keys:/opt/pyaleph/keys
-      - ../.local/storage:/var/lib/pyaleph
+      - pyaleph-local-storage:/var/lib/pyaleph
 
   pyaleph-api:
     volumes:
       - ./config.yml:/opt/pyaleph/config.yml:ro
-      - ../.local/storage:/var/lib/pyaleph
+      - pyaleph-local-storage:/var/lib/pyaleph
 
   p2p-service:
     volumes:

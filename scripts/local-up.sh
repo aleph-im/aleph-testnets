@@ -20,8 +20,8 @@ CCN_URL="http://localhost:4024"
 
 COMPOSE_FILES=(-f "$DEPLOY_DIR/docker-compose.yml" -f "$DEPLOY_DIR/docker-compose.local.yml")
 
-# Use a test private key (arbitrary, no real funds needed)
-TEST_PRIVATE_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+# Test private key: Anvil account #1 (accounts #0 is reserved for privileged ops)
+TEST_PRIVATE_KEY="59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 
 setup_env() {
     echo "==> Installing Python dependencies..."
@@ -81,7 +81,6 @@ stack_up() {
 
     # Create local data directories
     mkdir -p "$LOCAL_DIR/keys"
-    mkdir -p "$LOCAL_DIR/storage"
 
     # Copy config
     cp "$DEPLOY_DIR/config.yml.tpl" "$DEPLOY_DIR/config.yml"
@@ -111,14 +110,14 @@ deploy_contracts() {
     echo "==> Deploying contracts on Anvil..."
     "$REPO_ROOT/scripts/deploy-contracts.sh"
 
-    # Start the indexer (uses 'credits' profile)
-    echo "==> Starting indexer..."
-    docker compose "${COMPOSE_FILES[@]}" --profile credits up -d indexer
+    # Start the indexer and credit service (uses 'credits' profile)
+    echo "==> Starting indexer and credit service..."
+    docker compose "${COMPOSE_FILES[@]}" --profile credits up -d indexer credit-service
 
     # Wait for indexer to be ready
     echo "==> Waiting for indexer..."
     for i in $(seq 1 24); do
-        if curl -sf "http://localhost:8081" > /dev/null 2>&1; then
+        if curl -sf "http://localhost:8081/graphql" -X POST -H "Content-Type: application/json" -d '{"query":"{__typename}"}' > /dev/null 2>&1; then
             echo "==> Indexer is ready!"
             break
         fi

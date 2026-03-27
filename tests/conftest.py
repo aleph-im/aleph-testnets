@@ -87,6 +87,17 @@ def tmp_file(tmp_path):
 
 
 @pytest.fixture(scope="session")
+def ccn_api(ccn_url: str):
+    """Return a function that queries the CCN REST API and returns parsed JSON."""
+    def get(path: str) -> dict:
+        url = f"{ccn_url}{path}"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        resp = urllib.request.urlopen(req, timeout=10)
+        return json.loads(resp.read())
+    return get
+
+
+@pytest.fixture(scope="session")
 def contracts():
     """Load deployed contract addresses from .local/contracts.json."""
     path = os.environ.get("ALEPH_TESTNET_CONTRACTS_JSON", "")
@@ -128,7 +139,7 @@ def cast_send(anvil_rpc: str):
         to: str,
         sig: str,
         *args: str,
-        private_key: str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        private_key: str = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",  # Anvil #1
         value: str | None = None,
     ) -> subprocess.CompletedProcess:
         cmd = [

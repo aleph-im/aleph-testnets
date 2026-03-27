@@ -38,6 +38,15 @@ ipfs:
 
 aleph:
   queue_topic: ALEPH_TESTNET_TEST
+  credit_balances:
+    addresses:
+      - "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    post_types:
+      - aleph_credit_distribution
+      - aleph_credit_transfer
+      - aleph_credit_expense
+    channels:
+      - ALEPH_TESTNET_CREDIT
 
 p2p:
   daemon_host: p2p-service

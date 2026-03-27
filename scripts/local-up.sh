@@ -20,8 +20,8 @@ CCN_URL="http://localhost:4024"
 
 COMPOSE_FILES=(-f "$DEPLOY_DIR/docker-compose.yml" -f "$DEPLOY_DIR/docker-compose.local.yml")
 
-# Test private key: Anvil account #1 (accounts #0 is reserved for privileged ops)
-TEST_PRIVATE_KEY="59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+# Test private key: Anvil account #4 (accounts #0-#3 are reserved for privileged ops)
+TEST_PRIVATE_KEY="47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"
 
 setup_env() {
     echo "==> Installing Python dependencies..."
@@ -114,6 +114,10 @@ deploy_contracts() {
     echo "==> Starting indexer and credit service..."
     docker compose "${COMPOSE_FILES[@]}" --profile credits up -d indexer credit-service
 
+    # Start nodestatus services (corechannel aggregates + balance tracking)
+    echo "==> Starting nodestatus services..."
+    docker compose "${COMPOSE_FILES[@]}" --profile nodestatus up -d nodestatus nodestatus-balances
+
     # Wait for indexer to be ready
     echo "==> Waiting for indexer..."
     for i in $(seq 1 24); do
@@ -146,15 +150,15 @@ run_tests() {
 
 dump_logs() {
     echo "==> Dumping container logs..."
-    for svc in $(docker compose "${COMPOSE_FILES[@]}" --profile credits config --services 2>/dev/null); do
+    for svc in $(docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus config --services 2>/dev/null); do
         echo "===== $svc ====="
-        docker compose "${COMPOSE_FILES[@]}" --profile credits logs --no-color --tail=200 "$svc" 2>/dev/null || true
+        docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus logs --no-color --tail=200 "$svc" 2>/dev/null || true
     done
 }
 
 stack_down() {
     echo "==> Stopping CCN stack..."
-    docker compose "${COMPOSE_FILES[@]}" --profile credits down -v || true
+    docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus down -v || true
     rm -rf "$LOCAL_DIR"
     rm -f "$DEPLOY_DIR/.env" "$DEPLOY_DIR/config.yml"
     rm -rf "$DEPLOY_DIR/indexer"

@@ -98,6 +98,34 @@ def ccn_api(ccn_url: str):
 
 
 @pytest.fixture(scope="session")
+def ccn_messages(ccn_url: str):
+    """Return a function that queries the CCN messages API."""
+    def query(params: dict) -> list:
+        qs = "&".join(f"{k}={v}" for k, v in params.items())
+        url = f"{ccn_url}/api/v0/messages.json?{qs}"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        resp = urllib.request.urlopen(req, timeout=10)
+        data = json.loads(resp.read())
+        return data.get("messages", [])
+    return query
+
+
+@pytest.fixture(scope="session")
+def ccn_aggregates(ccn_url: str):
+    """Return a function that fetches an aggregate from the CCN."""
+    def get(address: str, key: str) -> dict | None:
+        url = f"{ccn_url}/api/v0/aggregates/{address}.json?keys={key}"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        try:
+            resp = urllib.request.urlopen(req, timeout=10)
+            data = json.loads(resp.read())
+            return data.get("data", {}).get(key)
+        except urllib.error.HTTPError:
+            return None
+    return get
+
+
+@pytest.fixture(scope="session")
 def contracts():
     """Load deployed contract addresses from .local/contracts.json."""
     path = os.environ.get("ALEPH_TESTNET_CONTRACTS_JSON", "")
@@ -105,6 +133,32 @@ def contracts():
         pytest.skip("No contracts.json — credits tests require deployed contracts")
     with open(path) as f:
         return json.load(f)
+
+
+@pytest.fixture(scope="session")
+def mock_aleph_addr(contracts):
+    """MockALEPH contract address on Anvil."""
+    return contracts["mock_aleph"]
+
+
+@pytest.fixture(scope="session")
+def mint_aleph(mock_aleph_addr, cast_send):
+    """Return a function that mints MockALEPH to an address.
+
+    Amount is in whole ALEPH tokens (e.g. 1000000 = 1M ALEPH).
+    MockALEPH has 18 decimals.
+    """
+    deployer_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
+    def mint(to: str, amount: int):
+        raw = str(amount * 10**18)
+        cast_send(
+            mock_aleph_addr,
+            "mint(address,uint256)",
+            to, raw,
+            private_key=deployer_key,
+        )
+    return mint
 
 
 @pytest.fixture(scope="session")
@@ -139,7 +193,7 @@ def cast_send(anvil_rpc: str):
         to: str,
         sig: str,
         *args: str,
-        private_key: str = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",  # Anvil #1
+        private_key: str = "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a",  # Anvil #4
         value: str | None = None,
     ) -> subprocess.CompletedProcess:
         cmd = [

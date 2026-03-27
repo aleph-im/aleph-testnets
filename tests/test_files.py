@@ -3,8 +3,8 @@ import uuid
 
 import pytest
 
-# Anvil account #1 — primary test account (see scripts/fund-test-accounts.sh)
-TEST_ADDR = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+# Anvil account #4 — primary test account (see scripts/fund-test-accounts.sh)
+TEST_ADDR = "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
 
 
 def _download_with_retry(aleph_cli, download_args, timeout=30):

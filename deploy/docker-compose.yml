@@ -210,8 +210,6 @@ services:
       BALANCES_SENDERS: '["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]'
       SCORES_SENDERS: '["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]'
       STATUS_SENDER: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-    volumes:
-      - ./nodestatus/abi:/usr/local/lib/python3.9/site-packages/aleph_nodestatus/abi:ro
     depends_on:
       - anvil
       - pyaleph-api
@@ -243,8 +241,6 @@ services:
       BALANCES_SENDERS: '["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]'
       SCORES_SENDERS: '["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]'
       STATUS_SENDER: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-    volumes:
-      - ./nodestatus/abi:/usr/local/lib/python3.9/site-packages/aleph_nodestatus/abi:ro
     depends_on:
       - anvil
       - pyaleph-api

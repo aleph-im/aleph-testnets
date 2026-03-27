@@ -193,7 +193,7 @@ services:
   nodestatus:
     restart: always
     image: alephim/nodestatus:latest
-    command: nodestatus -vv --window-size 1h
+    command: nodestatus -vv --window-size 365d
     environment:
       ETHEREUM_API_SERVER: http://anvil:8545
       ETHEREUM_TOKEN_CONTRACT: ${MOCKALEPH_ADDRESS}

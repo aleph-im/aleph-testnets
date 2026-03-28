@@ -48,7 +48,7 @@ test *args='': setup-env
 
 # Stop all containers (state is preserved for quick restart)
 stop-dev-env:
-    {{ compose }} --profile credits stop
+    {{ compose }} --profile credits --profile nodestatus stop
 
 # Stop containers and wipe all state (volumes, keys, configs)
 reset-dev-env:

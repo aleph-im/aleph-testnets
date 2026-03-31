@@ -118,6 +118,10 @@ deploy_contracts() {
     echo "==> Starting nodestatus services..."
     docker compose "${COMPOSE_FILES[@]}" --profile nodestatus up -d nodestatus nodestatus-balances
 
+    # Start scheduler services (scheduler-rs + scheduler-api)
+    echo "==> Starting scheduler services..."
+    docker compose "${COMPOSE_FILES[@]}" --profile scheduler up -d scheduler-rs scheduler-api
+
     # Wait for indexer to be ready
     echo "==> Waiting for indexer..."
     for i in $(seq 1 24); do
@@ -150,15 +154,15 @@ run_tests() {
 
 dump_logs() {
     echo "==> Dumping container logs..."
-    for svc in $(docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus config --services 2>/dev/null); do
+    for svc in $(docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus --profile scheduler config --services 2>/dev/null); do
         echo "===== $svc ====="
-        docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus logs --no-color --tail=200 "$svc" 2>/dev/null || true
+        docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus --profile scheduler logs --no-color --tail=200 "$svc" 2>/dev/null || true
     done
 }
 
 stack_down() {
     echo "==> Stopping CCN stack..."
-    docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus down -v || true
+    docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus --profile scheduler down -v || true
     rm -rf "$LOCAL_DIR"
     rm -f "$DEPLOY_DIR/.env" "$DEPLOY_DIR/config.yml"
     rm -rf "$DEPLOY_DIR/indexer"

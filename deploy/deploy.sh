@@ -38,6 +38,7 @@ scp "${SSH_OPTS[@]}" \
     "$SCRIPT_DIR/docker-compose.yml" \
     "$SCRIPT_DIR/config.yml.tpl" \
     "$SCRIPT_DIR/001-update-ipfs-config.sh" \
+    "$SCRIPT_DIR/001-create-scheduler-db.sql" \
     "$SCRIPT_DIR/.env" \
     "$REMOTE:$REMOTE_DIR/"
 

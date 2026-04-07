@@ -45,6 +45,10 @@ for i in $(seq 1 12); do
     sleep 5
 done
 
+# Clean previous forge artifacts that may be owned by root from prior Docker runs
+docker run --rm -v "$CONTRACTS_DIR:/contracts" alpine sh -c \
+    'rm -rf /contracts/cache /contracts/out /contracts/broadcast'
+
 echo "==> Deploying contracts..."
 foundry_run forge script script/Deploy.s.sol \
     --rpc-url http://anvil:8545 \

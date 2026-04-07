@@ -74,6 +74,7 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - pyaleph-postgres:/var/lib/postgresql/data
+      - ./001-create-scheduler-db.sql:/docker-entrypoint-initdb.d/001-create-scheduler-db.sql:ro
     environment:
       POSTGRES_USER: aleph
       POSTGRES_PASSWORD: decentralize-everything
@@ -248,6 +249,51 @@ services:
       - nodestatus
     networks:
       - pyaleph
+    logging:
+      options:
+        max-size: 50m
+
+  scheduler-rs:
+    restart: always
+    image: ${SCHEDULER_RS_IMAGE}:${SCHEDULER_RS_TAG}
+    depends_on:
+      - redis
+      - pyaleph-api
+    environment:
+      RUST_LOG: info
+      ALEPH_SCHEDULER_ALEPH_API_SERVER: http://pyaleph-api:4024
+      ALEPH_SCHEDULER_CORECHANNEL_ADDRESS: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+      ALEPH_SCHEDULER_SKIP_HARDCODED_NODES: "true"
+      ALEPH_SCHEDULER_NO_DISPATCH: "true"
+      ALEPH_SCHEDULER_REDIS_URL: redis://redis:6379
+      ALEPH_SCHEDULER_DATA_DIR: /app
+    networks:
+      - pyaleph
+    profiles:
+      - scheduler
+    logging:
+      options:
+        max-size: 50m
+
+  scheduler-api:
+    restart: always
+    image: ${SCHEDULER_API_IMAGE}:${SCHEDULER_API_TAG}
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      RUST_LOG: info
+      SCHEDULER_API_ALEPH_API_SERVER: http://pyaleph-api:4024
+      SCHEDULER_API_REDIS_URL: redis://redis:6379
+      SCHEDULER_API_DATABASE_URL: postgres://aleph:decentralize-everything@postgres:5432/scheduler
+      SCHEDULER_API_HOST: "0.0.0.0"
+      SCHEDULER_API_PORT: "8082"
+    ports:
+      - "127.0.0.1:8082:8082"
+    networks:
+      - pyaleph
+    profiles:
+      - scheduler
     logging:
       options:
         max-size: 50m

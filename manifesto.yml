@@ -24,6 +24,14 @@ components:
     image: alephim/credit-service
     tag: "latest"
 
+  scheduler-rs:
+    image: odesenfans/scheduler-rs
+    tag: "latest"
+
+  scheduler-api:
+    image: odesenfans/scheduler-api
+    tag: "latest"
+
 infrastructure:
   postgres:
     image: postgres

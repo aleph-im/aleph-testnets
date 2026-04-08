@@ -109,7 +109,6 @@ jobs:
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --deploy-contracts"
 
       - name: Provision CRN
-        if: false  # Enable when CRN tests are ready
         run: |
           # CRN provisioning runs on the GHA runner (needs doctl), not on the CCN droplet.
           # The CRN droplet name includes the run ID so cleanup only targets this run.

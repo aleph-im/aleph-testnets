@@ -75,6 +75,19 @@ wait_for_ccn() {
     return 1
 }
 
+download_rootfs() {
+    local rootfs="$LOCAL_DIR/rootfs.img"
+    if [ -f "$rootfs" ]; then
+        echo "==> Rootfs already downloaded"
+        return
+    fi
+    echo "==> Downloading Ubuntu 24.04 cloud image..."
+    mkdir -p "$LOCAL_DIR"
+    curl -fSL -o "$rootfs" \
+        "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+    echo "==> Rootfs downloaded to $rootfs"
+}
+
 stack_up() {
     # Source .env so image tags are available for key generation
     set -a
@@ -105,6 +118,8 @@ stack_up() {
 }
 
 deploy_contracts() {
+    download_rootfs
+
     # Export compose files as a space-separated string for child scripts
     export COMPOSE_FILES_STR="${COMPOSE_FILES[*]}"
 
@@ -169,6 +184,8 @@ run_tests() {
     export ALEPH_TESTNET_INDEXER_URL="http://localhost:8081"
     export ALEPH_TESTNET_CONTRACTS_JSON="$LOCAL_DIR/contracts.json"
     export ALEPH_TESTNET_ANVIL_RPC="http://localhost:8545"
+    export ALEPH_TESTNET_SCHEDULER_API_URL="http://localhost:8082"
+    export ALEPH_TESTNET_ROOTFS="$LOCAL_DIR/rootfs.img"
     cd "$REPO_ROOT"
     pytest -v --junitxml=results.xml "$@"
 }
@@ -213,6 +230,9 @@ case "${1:-}" in
     --crn-down)
         crn_down
         ;;
+    --download-rootfs)
+        download_rootfs
+        ;;
     --test)
         shift
         run_tests "$@"
@@ -230,11 +250,11 @@ case "${1:-}" in
         run_tests
         ;;
     --help|-h)
-        echo "Usage: $0 [--env|--up|--deploy-contracts|--crn-up|--crn-down|--test|--logs|--down]"
+        echo "Usage: $0 [--env|--up|--deploy-contracts|--download-rootfs|--crn-up|--crn-down|--test|--logs|--down]"
         exit 0
         ;;
     *)
-        echo "Usage: $0 [--env|--up|--deploy-contracts|--crn-up|--crn-down|--test|--logs|--down]"
+        echo "Usage: $0 [--env|--up|--deploy-contracts|--download-rootfs|--crn-up|--crn-down|--test|--logs|--down]"
         exit 1
         ;;
 esac

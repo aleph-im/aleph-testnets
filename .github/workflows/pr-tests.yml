@@ -108,6 +108,53 @@ jobs:
         run: |
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --deploy-contracts"
 
+      - name: Provision CRN
+        if: false  # Enable when CRN tests are ready
+        run: |
+          # CRN provisioning runs on the GHA runner (needs doctl), not on the CCN droplet.
+          # The CRN droplet name includes the run ID so cleanup only targets this run.
+          CRN_NAME="testnets-crn-0-pr${{ github.event.number }}-${{ github.run_id }}"
+          echo "CRN_NAME=$CRN_NAME" >> "$GITHUB_ENV"
+
+          doctl compute droplet create \
+            --image debian-12-x64 \
+            --size s-4vcpu-8gb \
+            --region ams3 \
+            --ssh-keys ${{ vars.DO_SSH_KEY_FINGERPRINT }} \
+            --tag-name testnets-crn \
+            --wait \
+            "$CRN_NAME"
+
+          until CRN_IPV4=$(doctl compute droplet get "$CRN_NAME" --format PublicIPv4 --no-header 2>/dev/null) && [ -n "$CRN_IPV4" ]; do
+            sleep 2
+          done
+          echo "CRN_IPV4=$CRN_IPV4" >> "$GITHUB_ENV"
+          echo "CRN IP: $CRN_IPV4"
+
+          for i in $(seq 1 30); do
+            if ssh-keyscan -H "$CRN_IPV4" >> ~/.ssh/known_hosts 2>/dev/null; then break; fi
+            if [ "$i" -eq 30 ]; then echo "ERROR: SSH not ready on CRN after 90s"; exit 1; fi
+            sleep 3
+          done
+          ssh root@${CRN_IPV4} "cloud-init status --wait || true"
+
+          # Write state so crn-up.sh --install and --register can find the droplet
+          ssh root@${DROPLET_IPV4} "mkdir -p /opt/aleph-testnets/.local/crn/0"
+          ssh root@${DROPLET_IPV4} "echo '$CRN_NAME' > /opt/aleph-testnets/.local/crn/0/droplet-name"
+          ssh root@${DROPLET_IPV4} "echo '$CRN_IPV4' > /opt/aleph-testnets/.local/crn/0/droplet-ip"
+
+          # Install and register (runs from CCN droplet, which has the aleph CLI + SSH key)
+          scp ~/.ssh/id_ed25519 root@${DROPLET_IPV4}:/root/.ssh/id_ed25519
+          ssh root@${DROPLET_IPV4} "chmod 600 /root/.ssh/id_ed25519"
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
+            CCN_HOST=${DROPLET_IPV4} \
+            SSH_KEY_FILE=/root/.ssh/id_ed25519 \
+            bash scripts/crn-up.sh --install"
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
+            CCN_HOST=${DROPLET_IPV4} \
+            SSH_KEY_FILE=/root/.ssh/id_ed25519 \
+            bash scripts/crn-up.sh --register"
+
       - name: Run tests
         run: |
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --test"
@@ -130,6 +177,13 @@ jobs:
           path: |
             results.xml
             docker-logs.txt
+
+      - name: Destroy CRN Droplet
+        if: always()
+        run: |
+          if [ -n "${CRN_NAME:-}" ]; then
+            doctl compute droplet delete --force "$CRN_NAME" || true
+          fi
 
       - name: Destroy Droplet
         if: always()

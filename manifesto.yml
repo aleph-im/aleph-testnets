@@ -6,7 +6,7 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    tag: "0.10.1-rc0"
+    tag: "0.10.1-rc2"
 
   p2p-service:
     image: alephim/p2p-service

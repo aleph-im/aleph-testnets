@@ -8,6 +8,8 @@
 #   ./scripts/local-up.sh --up              # start containers, wait for CCN
 #   ./scripts/local-up.sh --deploy-contracts # deploy contracts, start indexer, fund accounts
 #   ./scripts/local-up.sh --test            # run pytest (extra args passed through)
+#   ./scripts/local-up.sh --crn-up          # provision + install CRN on DigitalOcean
+#   ./scripts/local-up.sh --crn-down        # destroy CRN droplets
 #   ./scripts/local-up.sh --logs            # dump all container logs
 #   ./scripts/local-up.sh --down            # tear down stack and wipe state
 set -euo pipefail
@@ -140,6 +142,25 @@ deploy_contracts() {
     "$REPO_ROOT/scripts/fund-test-accounts.sh"
 }
 
+crn_up() {
+    # Determine the CCN host (the machine running docker compose).
+    # In CI this is the droplet's public IP; locally it's the host's external IP.
+    local ccn_host="${CCN_HOST:-}"
+    if [ -z "$ccn_host" ]; then
+        # Try to detect the external IP
+        ccn_host=$(curl -sf https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+    fi
+    export CCN_HOST="$ccn_host"
+    echo "==> Provisioning CRN(s) with CCN_HOST=$CCN_HOST"
+    "$REPO_ROOT/scripts/crn-up.sh" --provision
+    "$REPO_ROOT/scripts/crn-up.sh" --install
+    "$REPO_ROOT/scripts/crn-up.sh" --register
+}
+
+crn_down() {
+    "$REPO_ROOT/scripts/crn-up.sh" --destroy
+}
+
 run_tests() {
     echo "==> Running integration tests..."
     export PATH="$BIN_DIR:$PATH"
@@ -163,6 +184,12 @@ dump_logs() {
 stack_down() {
     echo "==> Stopping CCN stack..."
     docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus --profile scheduler down -v || true
+
+    # Destroy CRN droplets if any were provisioned
+    if [ -d "$LOCAL_DIR/crn" ]; then
+        "$REPO_ROOT/scripts/crn-up.sh" --destroy || true
+    fi
+
     rm -rf "$LOCAL_DIR"
     rm -f "$DEPLOY_DIR/.env" "$DEPLOY_DIR/config.yml"
     rm -rf "$DEPLOY_DIR/indexer"
@@ -179,6 +206,12 @@ case "${1:-}" in
         ;;
     --deploy-contracts)
         deploy_contracts
+        ;;
+    --crn-up)
+        crn_up
+        ;;
+    --crn-down)
+        crn_down
         ;;
     --test)
         shift
@@ -197,11 +230,11 @@ case "${1:-}" in
         run_tests
         ;;
     --help|-h)
-        echo "Usage: $0 [--env|--up|--deploy-contracts|--test|--logs|--down]"
+        echo "Usage: $0 [--env|--up|--deploy-contracts|--crn-up|--crn-down|--test|--logs|--down]"
         exit 0
         ;;
     *)
-        echo "Usage: $0 [--env|--up|--deploy-contracts|--test|--logs|--down]"
+        echo "Usage: $0 [--env|--up|--deploy-contracts|--crn-up|--crn-down|--test|--logs|--down]"
         exit 1
         ;;
 esac

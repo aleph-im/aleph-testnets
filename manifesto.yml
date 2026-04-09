@@ -32,7 +32,14 @@ components:
     image: odesenfans/scheduler-api
     tag: "latest"
 
+  aleph-vm:
+    version: "1.11.1"
+
 infrastructure:
+  vm-connector:
+    image: ghcr.io/aleph-im/vm-connector
+    tag: "alpha"
+
   postgres:
     image: postgres
     tag: "15.3"

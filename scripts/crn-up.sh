@@ -113,6 +113,7 @@ provision() {
             --region "$DO_REGION" \
             --ssh-keys "$DO_SSH_KEY_FINGERPRINT" \
             --tag-name testnets-crn \
+            --enable-ipv6 \
             --wait \
             "$name"
 
@@ -128,7 +129,20 @@ provision() {
             exit 1
         fi
         echo "$ip" > "$dir/droplet-ip"
-        echo "    Droplet $name → $ip"
+
+        # Get the public IPv6 address (DO assigns a /64 when --enable-ipv6 is used)
+        local ipv6=""
+        for _ in $(seq 1 15); do
+            ipv6=$(doctl compute droplet get "$name" --format PublicIPv6 --no-header 2>/dev/null || true)
+            if [ -n "$ipv6" ]; then break; fi
+            sleep 2
+        done
+        if [ -n "$ipv6" ]; then
+            echo "$ipv6" > "$dir/droplet-ipv6"
+            echo "    Droplet $name → $ip (IPv6: $ipv6)"
+        else
+            echo "    Droplet $name → $ip (no IPv6)"
+        fi
 
         echo "==> Waiting for SSH on $ip ..."
         for _ in $(seq 1 30); do
@@ -179,6 +193,22 @@ ALEPH_VM_API_SERVER=http://$CCN_HOST:4024
 ALEPH_VM_OWNER_ADDRESS=$CRN_OWNER_ADDR
 ALEPH_VM_ALLOCATION_TOKEN_HASH=$token_hash
 EOF
+
+        # Configure IPv6 if the droplet has a public IPv6 address
+        local ipv6_file
+        ipv6_file=$(crn_dir "$idx")/droplet-ipv6
+        if [ -f "$ipv6_file" ]; then
+            local ipv6_addr
+            ipv6_addr=$(cat "$ipv6_file")
+            # Derive the /64 prefix from the assigned address
+            local ipv6_pool
+            ipv6_pool=$(python3 -c "import ipaddress; print(ipaddress.IPv6Network(('$ipv6_addr', 64), strict=False))")
+            cat >> "$env_file" <<EOF
+ALEPH_VM_IPV6_ADDRESS_POOL=$ipv6_pool
+ALEPH_VM_IPV6_ALLOCATION_POLICY=dynamic
+EOF
+            echo "    IPv6 pool: $ipv6_pool"
+        fi
 
         # If we already have a node hash from registration, include it
         local hash_file

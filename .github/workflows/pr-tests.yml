@@ -59,6 +59,7 @@ jobs:
             --region ams3 \
             --ssh-keys ${{ vars.DO_SSH_KEY_FINGERPRINT }} \
             --tag-name testnets-crn \
+            --enable-ipv6 \
             --wait \
             "$CRN_NAME" &
           CRN_PID=$!
@@ -79,6 +80,10 @@ jobs:
           done
           echo "CRN_IPV4=$CRN_IPV4" >> "$GITHUB_ENV"
           echo "CRN Droplet IP: $CRN_IPV4"
+
+          CRN_IPV6=$(doctl compute droplet get "$CRN_NAME" --format PublicIPv6 --no-header 2>/dev/null || true)
+          echo "CRN_IPV6=$CRN_IPV6" >> "$GITHUB_ENV"
+          echo "CRN Droplet IPv6: $CRN_IPV6"
 
       - name: Wait for SSH
         timeout-minutes: 3
@@ -157,6 +162,9 @@ jobs:
           ssh root@${DROPLET_IPV4} "mkdir -p /opt/aleph-testnets/.local/crn/0"
           ssh root@${DROPLET_IPV4} "echo '$CRN_NAME' > /opt/aleph-testnets/.local/crn/0/droplet-name"
           ssh root@${DROPLET_IPV4} "echo '$CRN_IPV4' > /opt/aleph-testnets/.local/crn/0/droplet-ip"
+          if [ -n "${CRN_IPV6:-}" ]; then
+            ssh root@${DROPLET_IPV4} "echo '$CRN_IPV6' > /opt/aleph-testnets/.local/crn/0/droplet-ipv6"
+          fi
 
           # Copy SSH key to CCN droplet so it can reach the CRN
           scp ~/.ssh/id_ed25519 root@${DROPLET_IPV4}:/root/.ssh/id_ed25519

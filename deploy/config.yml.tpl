@@ -27,6 +27,7 @@ storage:
   store_files: true
   engine: filesystem
   folder: /var/lib/pyaleph
+  max_file_size: 1073741824
 
 ipfs:
   alive_topic: ALEPH_TESTNET_ALIVE

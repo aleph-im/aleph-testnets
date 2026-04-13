@@ -216,14 +216,15 @@ jobs:
             crn-supervisor.txt
             crn-vm-connector.txt
 
-      - name: Destroy CRN Droplet
-        if: always()
-        run: |
-          if [ -n "${CRN_NAME:-}" ]; then
-            doctl compute droplet delete --force "$CRN_NAME" || true
-          fi
+      # TODO: re-enable droplet cleanup after debugging
+      # - name: Destroy CRN Droplet
+      #   if: always()
+      #   run: |
+      #     if [ -n "${CRN_NAME:-}" ]; then
+      #       doctl compute droplet delete --force "$CRN_NAME" || true
+      #     fi
 
-      - name: Destroy Droplet
-        if: always()
-        run: |
-          doctl compute droplet delete --force "$DROPLET_NAME" || true
+      # - name: Destroy Droplet
+      #   if: always()
+      #   run: |
+      #     doctl compute droplet delete --force "$DROPLET_NAME" || true

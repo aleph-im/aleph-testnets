@@ -173,13 +173,13 @@ jobs:
           # Install CRN (system packages already done in parallel earlier,
           # this handles vm-connector, .deb download, supervisor config)
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
-            CCN_HOST=${DROPLET_IPV4} \
+            CCN_URL=http://${DROPLET_IPV4}:4024 \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             bash scripts/crn-up.sh --install"
 
           # Register CRN in corechannel aggregate
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
-            CCN_HOST=${DROPLET_IPV4} \
+            CCN_URL=http://${DROPLET_IPV4}:4024 \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             bash scripts/crn-up.sh --register"
 

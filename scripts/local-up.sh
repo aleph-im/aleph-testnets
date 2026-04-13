@@ -158,15 +158,18 @@ deploy_contracts() {
 }
 
 crn_up() {
-    # Determine the CCN host (the machine running docker compose).
-    # In CI this is the droplet's public IP; locally it's the host's external IP.
-    local ccn_host="${CCN_HOST:-}"
-    if [ -z "$ccn_host" ]; then
-        # Try to detect the external IP
+    # Determine the CCN URL. In CI this is set explicitly; locally we auto-detect.
+    if [ -z "${CCN_URL:-}" ]; then
+        local ccn_host
         ccn_host=$(curl -sf https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+        # Bracket IPv6 addresses for URL
+        if [[ "$ccn_host" == *:* ]]; then
+            export CCN_URL="http://[$ccn_host]:4024"
+        else
+            export CCN_URL="http://$ccn_host:4024"
+        fi
     fi
-    export CCN_HOST="$ccn_host"
-    echo "==> Provisioning CRN(s) with CCN_HOST=$CCN_HOST"
+    echo "==> Provisioning CRN(s) with CCN_URL=$CCN_URL"
     "$REPO_ROOT/scripts/crn-up.sh" --provision
     "$REPO_ROOT/scripts/crn-up.sh" --install
     "$REPO_ROOT/scripts/crn-up.sh" --register

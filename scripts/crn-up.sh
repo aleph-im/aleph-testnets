@@ -327,17 +327,10 @@ register_crn() {
         ip=$(crn_ip "$idx")
         local crn_name_str="testnet-crn-$idx"
 
-        # Prefer IPv6 for the CRN address (required for instance scheduling)
-        local crn_addr
-        local ipv6_file
-        ipv6_file=$(crn_dir "$idx")/droplet-ipv6
-        if [ -f "$ipv6_file" ]; then
-            local ipv6_addr
-            ipv6_addr=$(cat "$ipv6_file")
-            crn_addr="http://[$ipv6_addr]:4020"
-        else
-            crn_addr="http://$ip:4020"
-        fi
+        # Register with IPv4 — the scheduler and tests must be able to reach
+        # this address.  IPv6 *capability* is advertised separately via the
+        # CRN's ALEPH_VM_IPV6_ADDRESS_POOL in supervisor.env.
+        local crn_addr="http://$ip:4020"
 
         echo "==> Registering CRN $crn_name_str ($crn_addr) ..."
 

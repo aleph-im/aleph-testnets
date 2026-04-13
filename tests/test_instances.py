@@ -46,7 +46,7 @@ def test_instance_create_and_ssh(
 
     # Step 1: Upload rootfs to CCN
     upload_result = aleph_cli(
-        "file", "upload", rootfs_image, "--storage-engine", "ipfs", parse_json=True
+        "file", "upload", rootfs_image, "--storage-engine", "storage", parse_json=True
     )
     rootfs_hash = upload_result["item_hash"]
     assert rootfs_hash, "Upload should return an item_hash"

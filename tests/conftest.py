@@ -172,6 +172,32 @@ def anvil_rpc() -> str:
 
 
 @pytest.fixture(scope="session")
+def scheduler_api_url() -> str:
+    return os.environ.get("ALEPH_TESTNET_SCHEDULER_API_URL", "http://localhost:8082")
+
+
+@pytest.fixture(scope="session")
+def rootfs_image() -> str:
+    path = os.environ.get("ALEPH_TESTNET_ROOTFS", "")
+    if not path or not os.path.exists(path):
+        pytest.skip("No rootfs image — instance tests require ALEPH_TESTNET_ROOTFS")
+    return path
+
+
+@pytest.fixture(scope="session")
+def ssh_key_pair(tmp_path_factory):
+    """Generate an ephemeral Ed25519 SSH key pair for instance tests."""
+    key_dir = tmp_path_factory.mktemp("ssh")
+    private_key = key_dir / "id_ed25519"
+    public_key = key_dir / "id_ed25519.pub"
+    subprocess.run(
+        ["ssh-keygen", "-t", "ed25519", "-f", str(private_key), "-N", "", "-q"],
+        check=True,
+    )
+    return str(private_key), str(public_key)
+
+
+@pytest.fixture(scope="session")
 def indexer_graphql(indexer_url: str):
     """Return a function that queries the indexer's GraphQL endpoint."""
     def query(graphql_query: str, variables: dict | None = None) -> dict:

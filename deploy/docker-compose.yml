@@ -260,11 +260,12 @@ services:
       - redis
       - pyaleph-api
     environment:
-      RUST_LOG: info
+      RUST_LOG: debug
       ALEPH_SCHEDULER_ALEPH_API_SERVER: http://pyaleph-api:4024
       ALEPH_SCHEDULER_CORECHANNEL_ADDRESS: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
       ALEPH_SCHEDULER_SKIP_HARDCODED_NODES: "true"
-      ALEPH_SCHEDULER_NO_DISPATCH: "true"
+      ALEPH_SCHEDULER_NO_DISPATCH: "false"
+      ALEPH_SCHEDULER_CRN_AUTH_TOKEN: "allocate-on-testnet"
       ALEPH_SCHEDULER_REDIS_URL: redis://redis:6379
       ALEPH_SCHEDULER_DATA_DIR: /app
     networks:

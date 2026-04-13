@@ -10,7 +10,7 @@
 #   ./scripts/crn-up.sh --destroy          # delete droplet and clean state
 #
 # Environment variables:
-#   CCN_HOST            IP/hostname of the CCN (required for --install, --register)
+#   CCN_URL             URL of the CCN API (required for --install, --register), e.g. http://1.2.3.4:4024
 #   SSH_KEY_FILE        Path to SSH private key for droplet access (optional, defaults to ~/.ssh/id_ed25519)
 #   DO_SSH_KEY_FINGERPRINT  SSH key fingerprint registered with DigitalOcean (required for --provision)
 #   DO_REGION           DigitalOcean region (default: ams3)
@@ -33,9 +33,17 @@ DO_SIZE="${DO_SIZE:-s-4vcpu-8gb}"
 CRN_COUNT="${CRN_COUNT:-1}"
 ALLOCATION_TOKEN="${ALLOCATION_TOKEN:-allocate-on-testnet}"
 
+# Extract host from a URL, e.g. http://[::1]:4024 -> ::1, http://1.2.3.4:4024 -> 1.2.3.4
+url_host() {
+    python3 -c "from urllib.parse import urlparse; print(urlparse('$1').hostname)"
+}
+
 # Anvil account #4 — used for CRN registration (has 1M ALEPH from funding)
 CRN_OWNER_KEY="0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"
 CRN_OWNER_ADDR="0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
+
+# Anvil account #2 — nodestatus writes the corechannel aggregate under this address
+NODESTATUS_ADDR="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 
 # Read aleph-vm version from manifesto (or use env override)
 read_vm_version() {
@@ -113,6 +121,7 @@ provision() {
             --region "$DO_REGION" \
             --ssh-keys "$DO_SSH_KEY_FINGERPRINT" \
             --tag-name testnets-crn \
+            --enable-ipv6 \
             --wait \
             "$name"
 
@@ -128,7 +137,20 @@ provision() {
             exit 1
         fi
         echo "$ip" > "$dir/droplet-ip"
-        echo "    Droplet $name → $ip"
+
+        # Get the public IPv6 address (DO assigns a /64 when --enable-ipv6 is used)
+        local ipv6=""
+        for _ in $(seq 1 15); do
+            ipv6=$(doctl compute droplet get "$name" --format PublicIPv6 --no-header 2>/dev/null || true)
+            if [ -n "$ipv6" ]; then break; fi
+            sleep 2
+        done
+        if [ -n "$ipv6" ]; then
+            echo "$ipv6" > "$dir/droplet-ipv6"
+            echo "    Droplet $name → $ip (IPv6: $ipv6)"
+        else
+            echo "    Droplet $name → $ip (no IPv6)"
+        fi
 
         echo "==> Waiting for SSH on $ip ..."
         for _ in $(seq 1 30); do
@@ -148,7 +170,7 @@ provision() {
 # Phase 2: Install aleph-vm .deb and configure
 # ---------------------------------------------------------------------------
 install_crn() {
-    : "${CCN_HOST:?CCN_HOST must be set (IP/hostname of the CCN)}"
+    : "${CCN_URL:?CCN_URL must be set (e.g. http://1.2.3.4:4024)}"
 
     local version
     version=$(read_vm_version)
@@ -161,7 +183,7 @@ install_crn() {
     echo "==> aleph-vm version: $version"
     echo "    .deb URL: $deb_url"
     echo "    vm-connector: $connector_image"
-    echo "    CCN: http://$CCN_HOST:4024"
+    echo "    CCN: $CCN_URL"
 
     for idx in $(seq 0 $((CRN_COUNT - 1))); do
         local ip
@@ -175,10 +197,26 @@ install_crn() {
         cat > "$env_file" <<EOF
 ALEPH_VM_SUPERVISOR_HOST=0.0.0.0
 ALEPH_VM_DOMAIN_NAME=$ip
-ALEPH_VM_API_SERVER=http://$CCN_HOST:4024
+ALEPH_VM_API_SERVER=$CCN_URL
 ALEPH_VM_OWNER_ADDRESS=$CRN_OWNER_ADDR
 ALEPH_VM_ALLOCATION_TOKEN_HASH=$token_hash
 EOF
+
+        # Configure IPv6 if the droplet has a public IPv6 address
+        local ipv6_file
+        ipv6_file=$(crn_dir "$idx")/droplet-ipv6
+        if [ -f "$ipv6_file" ]; then
+            local ipv6_addr
+            ipv6_addr=$(cat "$ipv6_file")
+            # Derive the /64 prefix from the assigned address
+            local ipv6_pool
+            ipv6_pool=$(python3 -c "import ipaddress; print(ipaddress.IPv6Network(('$ipv6_addr', 64), strict=False))")
+            cat >> "$env_file" <<EOF
+ALEPH_VM_IPV6_ADDRESS_POOL=$ipv6_pool
+ALEPH_VM_IPV6_ALLOCATION_POLICY=dynamic
+EOF
+            echo "    IPv6 pool: $ipv6_pool"
+        fi
 
         # If we already have a node hash from registration, include it
         local hash_file
@@ -239,7 +277,7 @@ EOF
 # Phase 3: Register CRN in corechannel aggregate
 # ---------------------------------------------------------------------------
 register_crn() {
-    : "${CCN_HOST:?CCN_HOST must be set}"
+    : "${CCN_URL:?CCN_URL must be set (e.g. http://1.2.3.4:4024)}"
 
     local aleph_cli="$BIN_DIR/aleph"
     if [ ! -x "$aleph_cli" ]; then
@@ -247,31 +285,33 @@ register_crn() {
         exit 1
     fi
 
-    local ccn_url="http://$CCN_HOST:4024"
+    local ccn_url="$CCN_URL"
     local err_log
     err_log=$(mktemp)
 
     # Ensure a CCN exists in the corechannel aggregate (required before linking CRNs).
     # The link operation looks up a CCN owned by the same sender account.
+    # The corechannel aggregate is written by nodestatus under NODESTATUS_ADDR,
+    # not under the sender's address.  Filter nodes by owner to find ours.
     echo "==> Ensuring CCN exists for owner $CRN_OWNER_ADDR ..."
     local ccn_nodes
-    ccn_nodes=$(curl -sf "$ccn_url/api/v0/aggregates/$CRN_OWNER_ADDR.json?keys=corechannel" \
-        | jq -r '.data.corechannel.nodes // [] | length' 2>/dev/null || echo "0")
+    ccn_nodes=$(curl -sf "$ccn_url/api/v0/aggregates/$NODESTATUS_ADDR.json?keys=corechannel" \
+        | jq -r "[.data.corechannel.nodes // [] | .[] | select(.owner == \"$CRN_OWNER_ADDR\")] | length" 2>/dev/null || echo "0")
     if [ "$ccn_nodes" = "0" ]; then
         echo "    No CCN found — creating one..."
         ALEPH_PRIVATE_KEY="$CRN_OWNER_KEY" "$aleph_cli" \
             --ccn-url "$ccn_url" \
             node create-ccn \
             --name "testnet-ccn" \
-            --multiaddress "/ip4/$CCN_HOST/tcp/4025/p2p/testnet" \
+            --multiaddress "$(ccn_host=$(url_host "$CCN_URL"); if [[ "$ccn_host" == *:* ]]; then echo "/ip6/$ccn_host/tcp/4025/p2p/testnet"; else echo "/ip4/$ccn_host/tcp/4025/p2p/testnet"; fi)" \
             2>"$err_log" || {
             echo "    WARNING: create-ccn failed: $(cat "$err_log")"
         }
         # Wait for nodestatus to process the CCN creation
         echo "    Waiting for CCN to appear in corechannel aggregate..."
         for _ in $(seq 1 24); do
-            ccn_nodes=$(curl -sf "$ccn_url/api/v0/aggregates/$CRN_OWNER_ADDR.json?keys=corechannel" \
-                | jq -r '.data.corechannel.nodes // [] | length' 2>/dev/null || echo "0")
+            ccn_nodes=$(curl -sf "$ccn_url/api/v0/aggregates/$NODESTATUS_ADDR.json?keys=corechannel" \
+                | jq -r "[.data.corechannel.nodes // [] | .[] | select(.owner == \"$CRN_OWNER_ADDR\")] | length" 2>/dev/null || echo "0")
             if [ "$ccn_nodes" != "0" ]; then
                 echo "    CCN is registered."
                 break
@@ -287,7 +327,12 @@ register_crn() {
         ip=$(crn_ip "$idx")
         local crn_name_str="testnet-crn-$idx"
 
-        echo "==> Registering CRN $crn_name_str ($ip) ..."
+        # Register with IPv4 — the scheduler and tests must be able to reach
+        # this address.  IPv6 *capability* is advertised separately via the
+        # CRN's ALEPH_VM_IPV6_ADDRESS_POOL in supervisor.env.
+        local crn_addr="http://$ip:4020"
+
+        echo "==> Registering CRN $crn_name_str ($crn_addr) ..."
 
         # Create resource node
         local output
@@ -295,7 +340,7 @@ register_crn() {
             --ccn-url "$ccn_url" --json \
             node create-crn \
             --name "$crn_name_str" \
-            --address "http://$ip:4020" 2>"$err_log") || {
+            --address "$crn_addr" 2>"$err_log") || {
             echo "    create-crn failed: $(cat "$err_log")"
             echo "    (This may fail if the account lacks ALEPH balance)"
             continue
@@ -310,8 +355,8 @@ register_crn() {
             echo "    Trying to find node hash from corechannel aggregate..."
 
             # Fallback: look up the CRN in the aggregate by address
-            crn_hash=$(curl -sf "$ccn_url/api/v0/aggregates/$CRN_OWNER_ADDR.json?keys=corechannel" \
-                | jq -r ".data.corechannel.resource_nodes[] | select(.address == \"http://$ip:4020\") | .hash" 2>/dev/null || true)
+            crn_hash=$(curl -sf "$ccn_url/api/v0/aggregates/$NODESTATUS_ADDR.json?keys=corechannel" \
+                | jq -r ".data.corechannel.resource_nodes[] | select(.address == \"$crn_addr\") | .hash" 2>/dev/null || true)
         fi
 
         if [ -z "$crn_hash" ]; then

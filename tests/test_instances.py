@@ -55,7 +55,7 @@ def test_instance_create_and_ssh(
     instance_result = aleph_cli(
         "instance", "create",
         "--rootfs", rootfs_hash,
-        "--rootfs-size", "2GB",
+        "--rootfs-size", "4GiB",
         "--ssh-pubkey-file", public_key_path,
         "--vcpus", "1",
         "--memory", "2GiB",

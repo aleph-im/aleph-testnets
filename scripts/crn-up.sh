@@ -17,6 +17,7 @@
 #   DO_SIZE             Droplet size (default: s-4vcpu-8gb)
 #   CRN_COUNT           Number of CRNs to provision (default: 1)
 #   ALEPH_VM_VERSION    Override aleph-vm version from manifesto
+#   ALEPH_VM_BRANCH     Deploy from a Git branch instead of a release (uses CI artifacts via gh CLI)
 #   ALLOCATION_TOKEN    Token for CRN /control/allocations auth (default: "allocate-on-testnet")
 #
 # State is stored in .local/crn/<index>/ (droplet-name, droplet-ip, crn-hash).
@@ -67,6 +68,67 @@ with open('$REPO_ROOT/manifesto.yml') as f:
 c = m['infrastructure']['vm-connector']
 print(f'{c[\"image\"]}:{c[\"tag\"]}')
 "
+}
+
+# Read aleph-vm branch from manifesto (or use env override).
+# Returns empty string if no branch is configured.
+read_vm_branch() {
+    if [ -n "${ALEPH_VM_BRANCH:-}" ]; then
+        echo "$ALEPH_VM_BRANCH"
+        return
+    fi
+    python3 -c "
+import yaml
+with open('$REPO_ROOT/manifesto.yml') as f:
+    m = yaml.safe_load(f)
+print(m['components']['aleph-vm'].get('branch', ''))
+"
+}
+
+# Download aleph-vm .deb from GitHub Actions CI artifacts for a given branch.
+# Requires the gh CLI to be installed and authenticated.
+fetch_vm_deb_from_branch() {
+    local branch="$1"
+    local dest="$2"
+    local repo="aleph-im/aleph-vm"
+    local workflow="build-deb-package-and-integration-tests.yml"
+    local artifact_name="aleph-vm.debian-12.deb"
+
+    if ! command -v gh &>/dev/null; then
+        echo "ERROR: gh CLI is required to download CI artifacts. Install it from https://cli.github.com/" >&2
+        return 1
+    fi
+
+    echo "==> Fetching .deb artifact for branch '$branch' from CI..."
+
+    local run_id
+    run_id=$(gh run list \
+        --repo "$repo" \
+        --branch "$branch" \
+        --workflow "$workflow" \
+        --status success \
+        --limit 1 \
+        --json databaseId \
+        -q '.[0].databaseId')
+
+    if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+        echo "ERROR: No successful CI run found for branch '$branch' in $repo" >&2
+        echo "       Make sure the branch has a passing CI run (push to main or open PR)." >&2
+        return 1
+    fi
+
+    echo "    Found CI run: https://github.com/$repo/actions/runs/$run_id"
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    gh run download "$run_id" \
+        --repo "$repo" \
+        --name "$artifact_name" \
+        --dir "$tmp_dir"
+
+    mv "$tmp_dir/$artifact_name" "$dest"
+    rm -rf "$tmp_dir"
+    echo "    Downloaded $dest"
 }
 
 crn_dir() {
@@ -172,18 +234,32 @@ provision() {
 install_crn() {
     : "${CCN_URL:?CCN_URL must be set (e.g. http://1.2.3.4:4024)}"
 
-    local version
-    version=$(read_vm_version)
     local connector_image
     connector_image=$(read_vm_connector_image)
-    local deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.debian-12.deb"
     local token_hash
     token_hash=$(echo -n "$ALLOCATION_TOKEN" | sha256sum | cut -d' ' -f1)
 
-    echo "==> aleph-vm version: $version"
-    echo "    .deb URL: $deb_url"
-    echo "    vm-connector: $connector_image"
-    echo "    CCN: $CCN_URL"
+    # Determine .deb source: branch (CI artifact) or version (GitHub release)
+    local branch
+    branch=$(read_vm_branch)
+    local local_deb=""
+    local deb_url=""
+
+    if [ -n "$branch" ]; then
+        local_deb="$LOCAL_DIR/aleph-vm.debian-12.deb"
+        mkdir -p "$LOCAL_DIR"
+        fetch_vm_deb_from_branch "$branch" "$local_deb"
+        echo "    vm-connector: $connector_image"
+        echo "    CCN: $CCN_URL"
+    else
+        local version
+        version=$(read_vm_version)
+        deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.debian-12.deb"
+        echo "==> aleph-vm version: $version"
+        echo "    .deb URL: $deb_url"
+        echo "    vm-connector: $connector_image"
+        echo "    CCN: $CCN_URL"
+    fi
 
     for idx in $(seq 0 $((CRN_COUNT - 1))); do
         local ip
@@ -245,9 +321,15 @@ EOF
         ssh_crn "$idx" "docker run -d -p 127.0.0.1:4021:4021/tcp --restart=always --name vm-connector $connector_image" || \
             ssh_crn "$idx" "docker restart vm-connector" || true
 
-        # Download and install .deb
-        echo "    Downloading aleph-vm ${version}..."
-        ssh_crn "$idx" "wget -q -O /opt/aleph-vm.deb '$deb_url'"
+        # Download/upload and install .deb
+        if [ -n "$local_deb" ]; then
+            echo "    Uploading aleph-vm .deb..."
+            scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                -i "$SSH_KEY_FILE" "$local_deb" "root@$ip:/opt/aleph-vm.deb"
+        else
+            echo "    Downloading aleph-vm ${version}..."
+            ssh_crn "$idx" "wget -q -O /opt/aleph-vm.deb '$deb_url'"
+        fi
         echo "    Installing .deb..."
         ssh_crn "$idx" "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install -y /opt/aleph-vm.deb"
 

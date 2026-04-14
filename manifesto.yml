@@ -34,6 +34,9 @@ components:
 
   aleph-vm:
     version: "1.11.1"
+    # To deploy from a Git branch instead of a release, replace `version` with:
+    #   branch: "my-feature-branch"
+    # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).
 
 infrastructure:
   vm-connector:

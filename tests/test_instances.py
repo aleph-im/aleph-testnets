@@ -54,11 +54,11 @@ def test_instance_create_and_ssh(
     # Step 2: Create instance
     instance_result = aleph_cli(
         "instance", "create",
-        "--rootfs", rootfs_hash,
-        "--rootfs-size", "4GiB",
-        "--ssh-pubkey-file", public_key_path,
+        "--image", rootfs_hash,
         "--vcpus", "1",
         "--memory", "2GiB",
+        "--disk-size", "4GiB",
+        "--ssh-pubkey-file", public_key_path,
         parse_json=True,
     )
     instance_hash = instance_result["item_hash"]

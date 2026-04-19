@@ -148,17 +148,8 @@ jobs:
         run: |
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --env"
 
-      - name: Start stack
+      - name: Prepare CRN state on CCN
         run: |
-          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --up"
-
-      - name: Deploy contracts and start indexer
-        run: |
-          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --deploy-contracts"
-
-      - name: Install and register CRN
-        run: |
-          # Write CRN state so crn-up.sh can find the droplet
           ssh root@${DROPLET_IPV4} "mkdir -p /opt/aleph-testnets/.local/crn/0"
           ssh root@${DROPLET_IPV4} "echo '$CRN_NAME' > /opt/aleph-testnets/.local/crn/0/droplet-name"
           ssh root@${DROPLET_IPV4} "echo '$CRN_IPV4' > /opt/aleph-testnets/.local/crn/0/droplet-ip"
@@ -166,18 +157,50 @@ jobs:
             ssh root@${DROPLET_IPV4} "echo '$CRN_IPV6' > /opt/aleph-testnets/.local/crn/0/droplet-ipv6"
           fi
 
-          # Copy SSH key to CCN droplet so it can reach the CRN
           scp ~/.ssh/id_ed25519 root@${DROPLET_IPV4}:/root/.ssh/id_ed25519
           ssh root@${DROPLET_IPV4} "chmod 600 /root/.ssh/id_ed25519"
 
-          # Install CRN (system packages already done in parallel earlier,
-          # this handles vm-connector, .deb download, supervisor config)
-          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
-            CCN_URL=http://${DROPLET_IPV4}:4024 \
-            SSH_KEY_FILE=/root/.ssh/id_ed25519 \
-            bash scripts/crn-up.sh --install"
+      - name: Start stack + deploy contracts (CCN) and install CRN (parallel)
+        run: |
+          log_dir=$(mktemp -d)
+          echo "LOG_DIR=$log_dir" >> "$GITHUB_ENV"
 
-          # Register CRN in corechannel aggregate
+          # CCN path: bring up the stack, then deploy contracts + start indexer.
+          # CRN --register depends on both, so it still runs serially after this.
+          (
+            set -e
+            ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --up"
+            ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --deploy-contracts"
+          ) >"$log_dir/ccn.log" 2>&1 &
+          CCN_PID=$!
+
+          # CRN --install (download .deb, docker pull vm-connector, supervisor config).
+          # Independent of the CCN stack — safe to run concurrently.
+          (
+            set -e
+            ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
+              CCN_URL=http://${DROPLET_IPV4}:4024 \
+              SSH_KEY_FILE=/root/.ssh/id_ed25519 \
+              bash scripts/crn-up.sh --install"
+          ) >"$log_dir/crn-install.log" 2>&1 &
+          CRN_PID=$!
+
+          # Wait on both; tag which side failed so the log is easy to read.
+          ccn_rc=0; crn_rc=0
+          wait $CCN_PID || ccn_rc=$?
+          wait $CRN_PID || crn_rc=$?
+
+          echo "===== CCN log (rc=$ccn_rc) ====="
+          cat "$log_dir/ccn.log"
+          echo "===== CRN install log (rc=$crn_rc) ====="
+          cat "$log_dir/crn-install.log"
+
+          if [ $ccn_rc -ne 0 ] || [ $crn_rc -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Register CRN
+        run: |
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
             CCN_URL=http://${DROPLET_IPV4}:4024 \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \

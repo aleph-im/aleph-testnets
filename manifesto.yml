@@ -6,15 +6,15 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    tag: "0.10.1-rc3"
+    tag: "0.10.1-rc5"
 
   p2p-service:
     image: alephim/p2p-service
     tag: "0.1.5"
 
   aleph-cli:
-    version: "0.8.3"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.8.3/aleph-cli-linux-x86_64"
+    version: "0.9.0"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.9.0/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer
@@ -33,7 +33,7 @@ components:
     tag: "latest"
 
   aleph-vm:
-    version: "1.11.1"
+    version: "1.11.3"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

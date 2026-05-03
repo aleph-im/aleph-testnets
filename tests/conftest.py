@@ -259,3 +259,22 @@ def cast_call(anvil_rpc: str):
             )
         return result.stdout.strip()
     return call
+
+
+@pytest.fixture(scope="session")
+def crn_nodes(ccn_aggregates):
+    """Registered CRN entries from the corechannel aggregate.
+
+    Returns a list of dicts, each with at least 'hash' and 'address' keys.
+    Requires CRN_COUNT=2 (or more) during provisioning.
+    """
+    NODESTATUS_ADDR = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+    agg = ccn_aggregates(NODESTATUS_ADDR, "corechannel")
+    if agg is None:
+        pytest.skip("No corechannel aggregate — migration tests require registered CRNs")
+    resource_nodes = agg.get("resource_nodes", [])
+    if len(resource_nodes) < 2:
+        pytest.skip(
+            f"Need at least 2 CRNs for migration tests, found {len(resource_nodes)}"
+        )
+    return resource_nodes

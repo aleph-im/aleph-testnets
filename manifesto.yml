@@ -26,11 +26,11 @@ components:
 
   scheduler-rs:
     image: odesenfans/scheduler-rs
-    tag: "0.1.0-rc1"
+    tag: "0.1.0-rc3"
 
   scheduler-api:
     image: odesenfans/scheduler-api
-    tag: "0.1.0-rc1"
+    tag: "0.1.0-rc3"
 
   aleph-vm:
     # version: "1.12.0"

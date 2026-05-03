@@ -6,7 +6,7 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    tag: "0.10.1-rc5"
+    tag: "0.10.1"
 
   p2p-service:
     image: alephim/p2p-service
@@ -26,14 +26,14 @@ components:
 
   scheduler-rs:
     image: odesenfans/scheduler-rs
-    tag: "latest"
+    tag: "0.1.0-rc3"
 
   scheduler-api:
     image: odesenfans/scheduler-api
     tag: "latest"
 
   aleph-vm:
-    version: "1.11.3"
+    version: "1.12.0"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

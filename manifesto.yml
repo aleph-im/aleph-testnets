@@ -33,8 +33,7 @@ components:
     tag: "0.1.0-rc3"
 
   aleph-vm:
-    # version: "1.12.0"
-    branch: od/cold-migration-async
+    version: "1.12.0"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

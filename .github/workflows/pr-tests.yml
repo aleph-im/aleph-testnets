@@ -10,12 +10,16 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     environment: digitalocean
+    env:
+      # Number of CRN droplets to provision. The migration test requires 2.
+      CRN_COUNT: 2
 
     steps:
       - name: Checkout
@@ -34,15 +38,23 @@ jobs:
           echo "${{ secrets.DIGITALOCEAN_SSH_PRIVATE_KEY }}" | base64 --decode > ~/.ssh/id_ed25519
           chmod 0700 ~/.ssh
           chmod 0600 ~/.ssh/id_ed25519
+          # Keepalives: long-running test commands (notably the migration test)
+          # have multi-minute polling phases with no stdout, which lets the
+          # CI→droplet SSH session idle out as a "Broken pipe".
+          cat > ~/.ssh/config <<'EOF'
+          Host *
+              ServerAliveInterval 30
+              ServerAliveCountMax 20
+              TCPKeepAlive yes
+          EOF
+          chmod 0600 ~/.ssh/config
 
       - name: Create CCN and CRN Droplets
         run: |
           CCN_NAME="testnets-pr-${{ github.event.number }}-${{ github.run_id }}"
-          CRN_NAME="testnets-crn-0-pr${{ github.event.number }}-${{ github.run_id }}"
           echo "DROPLET_NAME=$CCN_NAME" >> "$GITHUB_ENV"
-          echo "CRN_NAME=$CRN_NAME" >> "$GITHUB_ENV"
 
-          # Create both droplets in parallel
+          # Create CCN droplet
           doctl compute droplet create \
             --image ubuntu-24-04-x64 \
             --size s-4vcpu-8gb \
@@ -53,18 +65,25 @@ jobs:
             "$CCN_NAME" &
           CCN_PID=$!
 
-          doctl compute droplet create \
-            --image debian-12-x64 \
-            --size s-4vcpu-8gb \
-            --region ams3 \
-            --ssh-keys ${{ vars.DO_SSH_KEY_FINGERPRINT }} \
-            --tag-name testnets-crn \
-            --enable-ipv6 \
-            --wait \
-            "$CRN_NAME" &
-          CRN_PID=$!
+          # Create CRN droplets in parallel (one per CRN_COUNT)
+          declare -a CRN_PIDS=()
+          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+            crn_name="testnets-crn-${idx}-pr${{ github.event.number }}-${{ github.run_id }}"
+            echo "CRN_${idx}_NAME=$crn_name" >> "$GITHUB_ENV"
 
-          wait $CCN_PID $CRN_PID
+            doctl compute droplet create \
+              --image debian-12-x64 \
+              --size s-4vcpu-8gb \
+              --region ams3 \
+              --ssh-keys ${{ vars.DO_SSH_KEY_FINGERPRINT }} \
+              --tag-name testnets-crn \
+              --enable-ipv6 \
+              --wait \
+              "$crn_name" &
+            CRN_PIDS+=($!)
+          done
+
+          wait $CCN_PID "${CRN_PIDS[@]}"
 
       - name: Get Droplet IPs
         timeout-minutes: 2
@@ -75,15 +94,20 @@ jobs:
           echo "DROPLET_IPV4=$DROPLET_IPV4" >> "$GITHUB_ENV"
           echo "CCN Droplet IP: $DROPLET_IPV4"
 
-          until CRN_IPV4=$(doctl compute droplet get "$CRN_NAME" --format PublicIPv4 --no-header 2>/dev/null) && [ -n "$CRN_IPV4" ]; do
-            sleep 2
-          done
-          echo "CRN_IPV4=$CRN_IPV4" >> "$GITHUB_ENV"
-          echo "CRN Droplet IP: $CRN_IPV4"
+          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+            name_var="CRN_${idx}_NAME"
+            crn_name="${!name_var}"
 
-          CRN_IPV6=$(doctl compute droplet get "$CRN_NAME" --format PublicIPv6 --no-header 2>/dev/null || true)
-          echo "CRN_IPV6=$CRN_IPV6" >> "$GITHUB_ENV"
-          echo "CRN Droplet IPv6: $CRN_IPV6"
+            until ipv4=$(doctl compute droplet get "$crn_name" --format PublicIPv4 --no-header 2>/dev/null) && [ -n "$ipv4" ]; do
+              sleep 2
+            done
+            echo "CRN_${idx}_IPV4=$ipv4" >> "$GITHUB_ENV"
+            echo "CRN $idx Droplet IP: $ipv4"
+
+            ipv6=$(doctl compute droplet get "$crn_name" --format PublicIPv6 --no-header 2>/dev/null || true)
+            echo "CRN_${idx}_IPV6=$ipv6" >> "$GITHUB_ENV"
+            echo "CRN $idx Droplet IPv6: $ipv6"
+          done
 
       - name: Wait for SSH
         timeout-minutes: 3
@@ -91,34 +115,49 @@ jobs:
           until ssh-keyscan -H "$DROPLET_IPV4" >> ~/.ssh/known_hosts 2>/dev/null; do
             sleep 3
           done
-          until ssh-keyscan -H "$CRN_IPV4" >> ~/.ssh/known_hosts 2>/dev/null; do
-            sleep 3
+          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+            ip_var="CRN_${idx}_IPV4"
+            ip="${!ip_var}"
+            until ssh-keyscan -H "$ip" >> ~/.ssh/known_hosts 2>/dev/null; do
+              sleep 3
+            done
           done
 
       - name: Install system dependencies (CCN + CRN in parallel)
         run: |
-          # CCN: wait for cloud-init, install docker + foundry + pip
+          # CCN: wait for cloud-init, install docker + foundry + pip + gh
+          # (gh is needed when manifesto.yml deploys aleph-vm from a branch, so
+          #  crn-up.sh can download the .deb artifact from aleph-im/aleph-vm CI.)
           (
             ssh root@${DROPLET_IPV4} "cloud-init status --wait || true"
             ssh root@${DROPLET_IPV4} "while fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 2; done"
+            ssh root@${DROPLET_IPV4} "mkdir -p -m 755 /etc/apt/keyrings && \
+              curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null && \
+              chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+              echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' > /etc/apt/sources.list.d/github-cli.list"
             ssh root@${DROPLET_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
-            ssh root@${DROPLET_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io docker-compose-v2 python3-pip jq curl"
+            ssh root@${DROPLET_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io docker-compose-v2 python3-pip jq curl gh"
           ) &
           CCN_PID=$!
 
-          # CRN: wait for cloud-init, install docker + apparmor + aleph-vm .deb
-          # (crn-up.sh --install will be called later from the CCN droplet, but we
-          #  can get the heavy apt work done now while the CCN is also installing)
-          (
-            ssh root@${CRN_IPV4} "cloud-init status --wait || true"
-            ssh root@${CRN_IPV4} "while fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 2; done"
-            ssh root@${CRN_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
-            ssh root@${CRN_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
-            ssh root@${CRN_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
-          ) &
-          CRN_PID=$!
+          # CRNs: wait for cloud-init, install docker + apparmor in parallel.
+          # crn-up.sh --install is called later from the CCN droplet, but the
+          # heavy apt work can happen now alongside the CCN install.
+          declare -a CRN_PIDS=()
+          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+            ip_var="CRN_${idx}_IPV4"
+            ip="${!ip_var}"
+            (
+              ssh root@${ip} "cloud-init status --wait || true"
+              ssh root@${ip} "while fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 2; done"
+              ssh root@${ip} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
+              ssh root@${ip} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
+              ssh root@${ip} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
+            ) &
+            CRN_PIDS+=($!)
+          done
 
-          wait $CCN_PID $CRN_PID
+          wait $CCN_PID "${CRN_PIDS[@]}"
 
       - name: Install Foundry
         # Needed on the host for test fixtures (cast_send/cast_call in conftest.py).
@@ -156,31 +195,46 @@ jobs:
         run: |
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --deploy-contracts"
 
-      - name: Install and register CRN
+      - name: Install and register CRNs
         run: |
-          # Write CRN state so crn-up.sh can find the droplet
-          ssh root@${DROPLET_IPV4} "mkdir -p /opt/aleph-testnets/.local/crn/0"
-          ssh root@${DROPLET_IPV4} "echo '$CRN_NAME' > /opt/aleph-testnets/.local/crn/0/droplet-name"
-          ssh root@${DROPLET_IPV4} "echo '$CRN_IPV4' > /opt/aleph-testnets/.local/crn/0/droplet-ip"
-          if [ -n "${CRN_IPV6:-}" ]; then
-            ssh root@${DROPLET_IPV4} "echo '$CRN_IPV6' > /opt/aleph-testnets/.local/crn/0/droplet-ipv6"
-          fi
+          # Write per-CRN state so crn-up.sh can find each droplet.
+          # crn-up.sh loops over CRN_COUNT and reads .local/crn/<idx>/.
+          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+            name_var="CRN_${idx}_NAME"
+            ip_var="CRN_${idx}_IPV4"
+            ipv6_var="CRN_${idx}_IPV6"
+            crn_name="${!name_var}"
+            crn_ip="${!ip_var}"
+            crn_ipv6="${!ipv6_var}"
 
-          # Copy SSH key to CCN droplet so it can reach the CRN
+            ssh root@${DROPLET_IPV4} "mkdir -p /opt/aleph-testnets/.local/crn/${idx}"
+            ssh root@${DROPLET_IPV4} "echo '$crn_name' > /opt/aleph-testnets/.local/crn/${idx}/droplet-name"
+            ssh root@${DROPLET_IPV4} "echo '$crn_ip' > /opt/aleph-testnets/.local/crn/${idx}/droplet-ip"
+            if [ -n "${crn_ipv6:-}" ]; then
+              ssh root@${DROPLET_IPV4} "echo '$crn_ipv6' > /opt/aleph-testnets/.local/crn/${idx}/droplet-ipv6"
+            fi
+          done
+
+          # Copy SSH key to CCN droplet so it can reach the CRNs
           scp ~/.ssh/id_ed25519 root@${DROPLET_IPV4}:/root/.ssh/id_ed25519
           ssh root@${DROPLET_IPV4} "chmod 600 /root/.ssh/id_ed25519"
 
-          # Install CRN (system packages already done in parallel earlier,
-          # this handles vm-connector, .deb download, supervisor config)
+          # Install CRNs (system packages already done in parallel earlier,
+          # this handles vm-connector, .deb download, supervisor config).
+          # GH_TOKEN lets crn-up.sh fetch the aleph-vm .deb from CI artifacts
+          # when manifesto.yml pins a branch instead of a release.
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
             CCN_URL=http://${DROPLET_IPV4}:4024 \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
+            CRN_COUNT=${CRN_COUNT} \
+            GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             bash scripts/crn-up.sh --install"
 
-          # Register CRN in corechannel aggregate
+          # Register CRNs in corechannel aggregate
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
             CCN_URL=http://${DROPLET_IPV4}:4024 \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
+            CRN_COUNT=${CRN_COUNT} \
             bash scripts/crn-up.sh --register"
 
       - name: Run tests
@@ -200,10 +254,14 @@ jobs:
       - name: Collect CRN logs
         if: always()
         run: |
-          if [ -n "${CRN_IPV4:-}" ]; then
-            ssh root@${CRN_IPV4} "journalctl -u aleph-vm-supervisor.service --no-pager -n 500" > crn-supervisor.txt 2>&1 || true
-            ssh root@${CRN_IPV4} "docker logs vm-connector" > crn-vm-connector.txt 2>&1 || true
-          fi
+          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+            ip_var="CRN_${idx}_IPV4"
+            ip="${!ip_var}"
+            if [ -n "${ip:-}" ]; then
+              ssh root@${ip} "journalctl -u aleph-vm-supervisor.service --no-pager -n 500" > "crn${idx}-supervisor.txt" 2>&1 || true
+              ssh root@${ip} "docker logs vm-connector" > "crn${idx}-vm-connector.txt" 2>&1 || true
+            fi
+          done
 
       - name: Upload artifacts
         if: always()
@@ -213,15 +271,19 @@ jobs:
           path: |
             results.xml
             docker-logs.txt
-            crn-supervisor.txt
-            crn-vm-connector.txt
+            crn*-supervisor.txt
+            crn*-vm-connector.txt
 
-      - name: Destroy CRN Droplet
+      - name: Destroy CRN Droplets
         if: always()
         run: |
-          if [ -n "${CRN_NAME:-}" ]; then
-            doctl compute droplet delete --force "$CRN_NAME" || true
-          fi
+          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+            name_var="CRN_${idx}_NAME"
+            crn_name="${!name_var}"
+            if [ -n "${crn_name:-}" ]; then
+              doctl compute droplet delete --force "$crn_name" || true
+            fi
+          done
 
       - name: Destroy Droplet
         if: always()

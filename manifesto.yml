@@ -30,7 +30,7 @@ components:
 
   scheduler-api:
     image: odesenfans/scheduler-api
-    tag: "latest"
+    tag: "0.1.0-rc3"
 
   aleph-vm:
     version: "1.12.0"

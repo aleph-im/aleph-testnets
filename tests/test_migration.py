@@ -146,7 +146,7 @@ def test_instance_migration(
 
     # Upload rootfs
     upload_result = aleph_cli(
-        "file", "upload", rootfs_image, "--storage-engine", "storage", parse_json=True
+        "file", "upload", rootfs_image, "--storage-engine", "storage", "--chain", "eth", parse_json=True
     )
     rootfs_hash = upload_result["item_hash"]
     assert rootfs_hash, "Upload should return an item_hash"
@@ -154,11 +154,13 @@ def test_instance_migration(
     # Create instance
     instance_result = aleph_cli(
         "instance", "create",
+        "migration-instance",
         "--image", rootfs_hash,
         "--disk-size", "4GiB",
         "--ssh-pubkey-file", public_key_path,
         "--vcpus", "1",
         "--memory", "2GiB",
+        "--chain", "eth",
         parse_json=True,
     )
     instance_hash = instance_result["item_hash"]
@@ -200,7 +202,7 @@ def test_instance_migration(
     crn_hash = _find_crn_hash(crn_nodes, initial_crn_url)
 
     # Unlink the CRN from the CCN
-    aleph_cli("node", "unlink", "--crn", crn_hash)
+    aleph_cli("node", "unlink", "--crn", crn_hash, "--chain", "eth")
 
     # Poll scheduler-api until the allocation moves to a different CRN
     def fetch_new_allocation():

@@ -8,6 +8,7 @@ def test_message_list(aleph_cli, unique_channel):
         "--type", "test-msg",
         "--content", '{"purpose": "list-test"}',
         "--channel", unique_channel,
+        "--chain", "eth",
         parse_json=True,
     )
 
@@ -29,6 +30,7 @@ def test_message_forget(aleph_cli, unique_channel):
         "--type", "test-forget",
         "--content", '{"ephemeral": true}',
         "--channel", unique_channel,
+        "--chain", "eth",
         parse_json=True,
     )
     item_hash = result["item_hash"]
@@ -36,7 +38,7 @@ def test_message_forget(aleph_cli, unique_channel):
     time.sleep(2)
 
     # Forget the message
-    aleph_cli("message", "forget", item_hash, parse_json=True)
+    aleph_cli("message", "forget", item_hash, "--chain", "eth", parse_json=True)
 
     time.sleep(2)
 

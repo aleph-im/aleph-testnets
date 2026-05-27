@@ -38,7 +38,7 @@ def test_message_forget(aleph_cli, unique_channel):
     time.sleep(2)
 
     # Forget the message
-    aleph_cli("message", "forget", item_hash, "--chain", "eth", parse_json=True)
+    aleph_cli("message", "forget", item_hash, "--chain", "eth", "-y", parse_json=True)
 
     time.sleep(2)
 

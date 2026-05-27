@@ -10,6 +10,7 @@ def test_aggregate_create_and_read(aleph_cli):
         "aggregate", "create",
         "--key", key,
         "--content", content,
+        "--chain", "eth",
         parse_json=True,
     )
 

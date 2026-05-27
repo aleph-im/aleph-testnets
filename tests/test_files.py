@@ -25,7 +25,7 @@ def _download_with_retry(aleph_cli, download_args, timeout=30):
 
 def test_file_upload_and_download(aleph_cli, tmp_file, tmp_path):
     """Upload a file and download it by hash, compare bytes."""
-    result = aleph_cli("file", "upload", str(tmp_file), parse_json=True)
+    result = aleph_cli("file", "upload", str(tmp_file), "--chain", "eth", parse_json=True)
     message_hash = result["item_hash"]
     assert message_hash, "Upload should return an item_hash"
 
@@ -37,7 +37,7 @@ def test_file_upload_and_download(aleph_cli, tmp_file, tmp_path):
 def test_file_upload_with_ref(aleph_cli, tmp_file, tmp_path):
     """Upload a file with a user-defined ref, download by ref."""
     ref = f"test-ref-{uuid.uuid4().hex[:8]}"
-    result = aleph_cli("file", "upload", str(tmp_file), "--ref", ref, parse_json=True)
+    result = aleph_cli("file", "upload", str(tmp_file), "--ref", ref, "--chain", "eth", parse_json=True)
     assert result["item_hash"], "Upload should return an item_hash"
 
     out = tmp_path / "downloaded_ref.bin"

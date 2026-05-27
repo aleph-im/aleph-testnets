@@ -383,10 +383,11 @@ register_crn() {
     if [ "$ccn_nodes" = "0" ]; then
         echo "    No CCN found — creating one..."
         ALEPH_PRIVATE_KEY="$CRN_OWNER_KEY" "$aleph_cli" \
-            --ccn-url "$ccn_url" \
+            --ccn "$ccn_url" \
             node create-ccn \
-            --name "testnet-ccn" \
+            "testnet-ccn" \
             --multiaddress "$(ccn_host=$(url_host "$CCN_URL"); if [[ "$ccn_host" == *:* ]]; then echo "/ip6/$ccn_host/tcp/4025/p2p/testnet"; else echo "/ip4/$ccn_host/tcp/4025/p2p/testnet"; fi)" \
+            --chain eth \
             2>"$err_log" || {
             echo "    WARNING: create-ccn failed: $(cat "$err_log")"
         }
@@ -420,10 +421,11 @@ register_crn() {
         # Create resource node
         local output
         output=$(ALEPH_PRIVATE_KEY="$CRN_OWNER_KEY" "$aleph_cli" \
-            --ccn-url "$ccn_url" --json \
+            --ccn "$ccn_url" --json \
             node create-crn \
-            --name "$crn_name_str" \
-            --address "$crn_addr" 2>"$err_log") || {
+            "$crn_name_str" \
+            --url "$crn_addr" \
+            --chain eth 2>"$err_log") || {
             echo "    create-crn failed: $(cat "$err_log")"
             echo "    (This may fail if the account lacks ALEPH balance)"
             continue
@@ -453,8 +455,8 @@ register_crn() {
         # Link CRN to CCN
         echo "    Linking CRN to CCN..."
         ALEPH_PRIVATE_KEY="$CRN_OWNER_KEY" "$aleph_cli" \
-            --ccn-url "$ccn_url" \
-            node link --crn "$crn_hash" 2>"$err_log" || {
+            --ccn "$ccn_url" \
+            node link --crn "$crn_hash" --chain eth 2>"$err_log" || {
             echo "    WARNING: link failed: $(cat "$err_log")"
         }
 

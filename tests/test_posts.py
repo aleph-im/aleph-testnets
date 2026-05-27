@@ -11,6 +11,7 @@ def test_post_create_and_list(aleph_cli, unique_channel):
         "--type", "test-post",
         "--content", content,
         "--channel", unique_channel,
+        "--chain", "eth",
         parse_json=True,
     )
     item_hash = result["item_hash"]
@@ -36,6 +37,7 @@ def test_post_amend(aleph_cli, unique_channel):
         "--type", "test-post",
         "--content", original,
         "--channel", unique_channel,
+        "--chain", "eth",
         parse_json=True,
     )
     item_hash = result["item_hash"]
@@ -48,6 +50,7 @@ def test_post_amend(aleph_cli, unique_channel):
         "--ref", item_hash,
         "--content", updated,
         "--channel", unique_channel,
+        "--chain", "eth",
         parse_json=True,
     )
 

@@ -1,19 +1,15 @@
-import json
 import subprocess
 import time
-import urllib.request
-import urllib.error
 from urllib.parse import urlparse
 
 import pytest
 
+# Nodestatus account: owns the testnet's corechannel aggregate (registered CRNs).
+NODESTATUS_ADDR = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+
 
 def _poll(description, fetch, timeout, interval=5):
-    """Poll fetch() until it returns a truthy value or timeout is reached.
-
-    fetch() should return the result on success or None to keep polling.
-    It may raise to keep polling (exceptions are swallowed until timeout).
-    """
+    """Poll fetch() until it returns a truthy value or timeout is reached."""
     deadline = time.time() + timeout
     last_err = None
     while time.time() < deadline:
@@ -27,31 +23,38 @@ def _poll(description, fetch, timeout, interval=5):
     pytest.fail(f"{description} did not succeed within {timeout}s (last error: {last_err})")
 
 
-def _http_get_json(url):
-    """GET a URL and return parsed JSON, or None on HTTP error."""
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return json.loads(resp.read())
-    except (urllib.error.HTTPError, urllib.error.URLError, OSError):
-        return None
+def _resolve_crn_host(aleph_cli, crn_hash: str) -> str:
+    """Return the CRN's reachable hostname (from its registered URL in the
+    corechannel aggregate), given the node hash from `instance show` placement.
+    """
+    nodes = aleph_cli(
+        "node", "list", "--type", "crn", "--all",
+        "--corechannel-address", NODESTATUS_ADDR,
+        parse_json=True,
+    )
+    for n in nodes or []:
+        if n.get("hash") == crn_hash:
+            return urlparse(n["address"]).hostname
+    pytest.fail(f"CRN {crn_hash} not found in corechannel aggregate")
 
 
 @pytest.mark.timeout(420)
-def test_instance_create_and_ssh(
-    aleph_cli, rootfs_image, ssh_key_pair, scheduler_api_url, ccn_url
-):
-    """End-to-end: create instance → scheduler dispatches → CRN boots → SSH in."""
+def test_instance_create_and_ssh(aleph_cli, rootfs_image, ssh_key_pair):
+    """End-to-end: create instance → scheduler dispatches → CRN boots → SSH in.
+
+    Discovery uses `aleph instance show --verbose` (scheduler placement +
+    CRN-reported mapped ports in one call). SSH goes over the CRN's IPv4 plus
+    the host-side mapped port — the CLI's own `instance ssh` connects via the
+    VM's IPv6 which isn't reachable in this CI.
+    """
     private_key_path, public_key_path = ssh_key_pair
 
-    # Step 1: Upload rootfs to CCN
     upload_result = aleph_cli(
         "file", "upload", rootfs_image, "--storage-engine", "storage", "--chain", "eth", parse_json=True
     )
     rootfs_hash = upload_result["item_hash"]
     assert rootfs_hash, "Upload should return an item_hash"
 
-    # Step 2: Create instance
     instance_result = aleph_cli(
         "instance", "create",
         "test-instance",
@@ -66,51 +69,30 @@ def test_instance_create_and_ssh(
     instance_hash = instance_result["item_hash"]
     assert instance_hash, "Instance create should return an item_hash"
 
-    # Step 3: Poll scheduler-api for allocation (discover CRN)
-    def fetch_allocation():
-        data = _http_get_json(
-            f"{scheduler_api_url}/api/v0/allocation/{instance_hash}"
+    # Wait for scheduler dispatch + CRN boot + SSH port mapping.
+    def vm_ready():
+        data = aleph_cli(
+            "instance", "show", instance_hash, "--verbose",
+            parse_json=True, check=False,
         )
-        if data and data.get("node", {}).get("url"):
+        if not isinstance(data, dict):
+            return None
+        node = data.get("placement", {}).get("allocated_node")
+        mapped = data.get("mapped_ports") or {}
+        if node and mapped.get("22") is not None:
             return data
         return None
 
-    allocation = _poll("Scheduler allocation", fetch_allocation, timeout=180)
-    crn_url_raw = allocation["node"]["url"]  # e.g. "http://1.2.3.4:4020"
-    assert crn_url_raw, "Allocation should include a CRN URL"
+    show = _poll("Instance dispatched + SSH port mapped", vm_ready, timeout=300)
+    crn_host = _resolve_crn_host(aleph_cli, show["placement"]["allocated_node"])
+    ssh_port = int(show["mapped_ports"]["22"])
 
-    # Parse CRN IP from the URL
-    parsed = urlparse(crn_url_raw)
-    crn_host = parsed.hostname
-    crn_port = parsed.port or 4020
-    crn_base = f"http://{crn_host}:{crn_port}"
-
-    # Step 4: Poll CRN for running VM with mapped SSH port
-    def fetch_ssh_port():
-        data = _http_get_json(f"{crn_base}/v2/about/executions/list")
-        if not data:
-            return None
-        execution = data.get(instance_hash)
-        if not execution:
-            return None
-        if not execution.get("running"):
-            return None
-        networking = execution.get("networking", {})
-        mapped_ports = networking.get("mapped_ports", {})
-        port_22 = mapped_ports.get("22") or mapped_ports.get(22)
-        if port_22 and port_22.get("host"):
-            return int(port_22["host"])
-        return None
-
-    ssh_host_port = _poll("CRN VM boot + SSH port", fetch_ssh_port, timeout=120)
-
-    # Step 5: SSH into the VM
     def try_ssh():
         result = subprocess.run(
             [
                 "ssh",
                 "-i", private_key_path,
-                "-p", str(ssh_host_port),
+                "-p", str(ssh_port),
                 "-o", "StrictHostKeyChecking=no",
                 "-o", "UserKnownHostsFile=/dev/null",
                 "-o", "ConnectTimeout=5",

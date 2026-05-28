@@ -46,6 +46,12 @@ CRN_OWNER_ADDR="0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
 # Anvil account #2 — nodestatus writes the corechannel aggregate under this address
 NODESTATUS_ADDR="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 
+# Network passed as --network on every CLI call. The CLI derives the corechannel
+# --network-tag from this network's name, so it MUST match the nodestatus
+# FILTER_TAG (deploy/docker-compose.yml) and the tests' --network (tests/conftest.py),
+# otherwise nodestatus ignores the create/link operations.
+TESTNET_NETWORK="testnet"
+
 # Read aleph-vm version from manifesto (or use env override)
 read_vm_version() {
     if [ -n "${ALEPH_VM_VERSION:-}" ]; then
@@ -372,18 +378,28 @@ register_crn() {
     local err_log
     err_log=$(mktemp)
 
+    # Ensure the CLI has a 'testnet' network so `--network testnet` resolves
+    # (and so node operations are tagged 'testnet', matching nodestatus's
+    # FILTER_TAG). Idempotent: add if missing, otherwise refresh its scheduler
+    # URL. The scheduler URL is unused here but kept local so the network never
+    # points at mainnet infrastructure.
+    "$aleph_cli" config network add "$TESTNET_NETWORK" --scheduler-url "http://localhost:8082" 2>/dev/null \
+        || "$aleph_cli" config network set --network "$TESTNET_NETWORK" --scheduler-url "http://localhost:8082" >/dev/null 2>&1
+    "$aleph_cli" config network use "$TESTNET_NETWORK" >/dev/null 2>&1
+
     # Ensure a CCN exists in the corechannel aggregate (required before linking CRNs).
     # The link operation looks up a CCN owned by the same sender account.
     # The corechannel aggregate is written by nodestatus under NODESTATUS_ADDR,
     # not under the sender's address.  Filter nodes by owner to find ours.
     echo "==> Ensuring CCN exists for owner $CRN_OWNER_ADDR ..."
     local ccn_nodes
-    ccn_nodes=$(curl -sf "$ccn_url/api/v0/aggregates/$NODESTATUS_ADDR.json?keys=corechannel" \
-        | jq -r "[.data.corechannel.nodes // [] | .[] | select(.owner == \"$CRN_OWNER_ADDR\")] | length" 2>/dev/null || echo "0")
+    ccn_nodes=$("$aleph_cli" --ccn "$ccn_url" --network "$TESTNET_NETWORK" --json node list \
+        --type ccn --address "$CRN_OWNER_ADDR" --corechannel-address "$NODESTATUS_ADDR" \
+        2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
     if [ "$ccn_nodes" = "0" ]; then
         echo "    No CCN found — creating one..."
         ALEPH_PRIVATE_KEY="$CRN_OWNER_KEY" "$aleph_cli" \
-            --ccn "$ccn_url" \
+            --ccn "$ccn_url" --network "$TESTNET_NETWORK" \
             node create-ccn \
             "testnet-ccn" \
             --multiaddress "$(ccn_host=$(url_host "$CCN_URL"); if [[ "$ccn_host" == *:* ]]; then echo "/ip6/$ccn_host/tcp/4025/p2p/testnet"; else echo "/ip4/$ccn_host/tcp/4025/p2p/testnet"; fi)" \
@@ -394,8 +410,9 @@ register_crn() {
         # Wait for nodestatus to process the CCN creation
         echo "    Waiting for CCN to appear in corechannel aggregate..."
         for _ in $(seq 1 24); do
-            ccn_nodes=$(curl -sf "$ccn_url/api/v0/aggregates/$NODESTATUS_ADDR.json?keys=corechannel" \
-                | jq -r "[.data.corechannel.nodes // [] | .[] | select(.owner == \"$CRN_OWNER_ADDR\")] | length" 2>/dev/null || echo "0")
+            ccn_nodes=$("$aleph_cli" --ccn "$ccn_url" --network "$TESTNET_NETWORK" --json node list \
+                --type ccn --address "$CRN_OWNER_ADDR" --corechannel-address "$NODESTATUS_ADDR" \
+                2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
             if [ "$ccn_nodes" != "0" ]; then
                 echo "    CCN is registered."
                 break
@@ -421,7 +438,7 @@ register_crn() {
         # Create resource node
         local output
         output=$(ALEPH_PRIVATE_KEY="$CRN_OWNER_KEY" "$aleph_cli" \
-            --ccn "$ccn_url" --json \
+            --ccn "$ccn_url" --network "$TESTNET_NETWORK" --json \
             node create-crn \
             "$crn_name_str" \
             --url "$crn_addr" \
@@ -439,9 +456,10 @@ register_crn() {
             echo "    Response: $output"
             echo "    Trying to find node hash from corechannel aggregate..."
 
-            # Fallback: look up the CRN in the aggregate by address
-            crn_hash=$(curl -sf "$ccn_url/api/v0/aggregates/$NODESTATUS_ADDR.json?keys=corechannel" \
-                | jq -r ".data.corechannel.resource_nodes[] | select(.address == \"$crn_addr\") | .hash" 2>/dev/null || true)
+            # Fallback: look up the CRN in the corechannel aggregate by address
+            crn_hash=$("$aleph_cli" --ccn "$ccn_url" --network "$TESTNET_NETWORK" --json node list \
+                --type crn --all --corechannel-address "$NODESTATUS_ADDR" \
+                2>/dev/null | jq -r ".[] | select(.address == \"$crn_addr\") | .hash" 2>/dev/null || true)
         fi
 
         if [ -z "$crn_hash" ]; then
@@ -455,7 +473,7 @@ register_crn() {
         # Link CRN to CCN
         echo "    Linking CRN to CCN..."
         ALEPH_PRIVATE_KEY="$CRN_OWNER_KEY" "$aleph_cli" \
-            --ccn "$ccn_url" \
+            --ccn "$ccn_url" --network "$TESTNET_NETWORK" \
             node link --crn "$crn_hash" --chain eth 2>"$err_log" || {
             echo "    WARNING: link failed: $(cat "$err_log")"
         }

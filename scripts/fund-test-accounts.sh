@@ -23,6 +23,10 @@ DEPLOY_DIR="$REPO_ROOT/deploy"
 LOCAL_DIR="$REPO_ROOT/.local"
 CONTRACTS_JSON="$LOCAL_DIR/contracts.json"
 CCN_URL="http://localhost:4024"
+# Passed as --network on every CLI call so the CLI never falls back to its
+# builtin mainnet network. These balance reads use the raw --ccn URL, so the
+# network is never actually contacted, but we set it explicitly for safety.
+TESTNET_NETWORK="testnet"
 
 # Anvil account #0 — privileged (deployer + credit service)
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -100,8 +104,8 @@ echo "==> Waiting for credit balances on CCN (up to 120s)..."
 for attempt in $(seq 1 24); do
     ALL_FUNDED=true
     for ADDR in "${TEST_ADDRS[@]}"; do
-        BALANCE=$(curl -sf "$CCN_URL/api/v0/addresses/$ADDR/balance" 2>/dev/null \
-            | jq -r '.credit_balance // 0' 2>/dev/null || echo 0)
+        BALANCE=$(aleph --ccn "$CCN_URL" --network "$TESTNET_NETWORK" --json account balance "$ADDR" 2>/dev/null \
+            | jq -r '.credits // 0' 2>/dev/null || echo 0)
         if [ "$BALANCE" = "0" ] || [ "$BALANCE" = "null" ]; then
             ALL_FUNDED=false
             break
@@ -132,8 +136,8 @@ echo "    Credit contract:            $CREDIT_ADDR"
 echo ""
 echo "  Test accounts:"
 for ADDR in "${TEST_ADDRS[@]}"; do
-    CREDITS=$(curl -sf "$CCN_URL/api/v0/addresses/$ADDR/balance" 2>/dev/null \
-        | jq -r '.credit_balance // 0' 2>/dev/null || echo "?")
+    CREDITS=$(aleph --ccn "$CCN_URL" --network "$TESTNET_NETWORK" --json account balance "$ADDR" 2>/dev/null \
+        | jq -r '.credits // 0' 2>/dev/null || echo "?")
     ALEPH_RAW=$(cast_run call --rpc-url http://anvil:8545 \
         "$MOCKALEPH_ADDR" "balanceOf(address)(uint256)" "$ADDR" 2>/dev/null | head -1 || echo "?")
     if [ "$ALEPH_RAW" != "?" ]; then

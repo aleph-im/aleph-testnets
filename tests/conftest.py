@@ -45,24 +45,33 @@ def ccn_ready(ccn_url: str):
 
 @pytest.fixture(scope="session")
 def aleph_cli_config(tmp_path_factory, scheduler_api_url: str) -> str:
-    """Isolated CLI config directory with a 'testnet' network as default.
+    """Isolated CLI config directory pointing the scheduler at the local testnet.
 
     Commands that resolve a scheduler URL (`aleph instance show`,
-    `aleph instance ssh`) read it from the current network's config. Without
-    this fixture they'd hit the CLI's builtin mainnet scheduler.
+    `aleph instance ssh`) read it from the current network's config. We set it
+    on the *builtin* network (`mainnet`) in place rather than adding a new
+    named network and switching to it.
+
+    Why this matters: node operations (`node link` / `node unlink`) embed the
+    current network's *name* as the corechannel `--network-tag`. crn-up.sh
+    links the CRNs with the CLI's default config — i.e. tag `mainnet`. If this
+    fixture switched the default network to a differently-named one, every
+    `node unlink` issued via `aleph_cli` would be tagged with that name and no
+    longer match the `mainnet`-tagged link, so the unlink would be a silent
+    no-op and the VM would never migrate (see test_migration). Keeping the
+    builtin name preserves tag parity with crn-up.sh.
 
     Returned path is exported as XDG_CONFIG_HOME by the aleph_cli fixture so
     user config in ~/.config/aleph is not touched.
     """
     cfg = tmp_path_factory.mktemp("aleph-cli-config")
     env = {**os.environ, "XDG_CONFIG_HOME": str(cfg)}
-    for cmd in (
-        ["aleph", "config", "network", "add", "testnet", "--scheduler-url", scheduler_api_url],
-        ["aleph", "config", "network", "use", "testnet"],
-    ):
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
-        if result.returncode != 0:
-            pytest.fail(f"CLI config setup failed: {' '.join(cmd)}\nStderr: {result.stderr}")
+    # `network set` (no --network) updates the current/default network in place,
+    # leaving its name — and thus the node-operation tag — as the builtin default.
+    cmd = ["aleph", "config", "network", "set", "--scheduler-url", scheduler_api_url]
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    if result.returncode != 0:
+        pytest.fail(f"CLI config setup failed: {' '.join(cmd)}\nStderr: {result.stderr}")
     return str(cfg)
 
 

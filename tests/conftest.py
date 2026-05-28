@@ -52,7 +52,7 @@ def aleph_cli(ccn_url: str, private_key: str):
         result = aleph_cli("post", "list", "--channels", "test", parse_json=True)
     """
     def run(*args: str, parse_json: bool = False, check: bool = True) -> subprocess.CompletedProcess | dict:
-        cmd = ["aleph", "--ccn-url", ccn_url]
+        cmd = ["aleph", "--ccn", ccn_url]
         if parse_json:
             cmd.append("--json")
         cmd.extend(args)

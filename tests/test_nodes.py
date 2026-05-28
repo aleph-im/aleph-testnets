@@ -37,8 +37,9 @@ def test_create_node(aleph_cli, mint_aleph, private_key, ccn_aggregates):
     # Create a node using the aleph CLI
     result = aleph_cli(
         "node", "create-ccn",
-        "--name", "test-ccn",
+        "test-ccn",
         "--multiaddress", "/ip4/127.0.0.1/tcp/4025/p2p/test-node",
+        "--chain", "eth",
         check=False,
     )
 

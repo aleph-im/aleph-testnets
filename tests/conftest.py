@@ -43,41 +43,53 @@ def ccn_ready(ccn_url: str):
     pytest.fail(f"CCN not ready at {url} after 120s: {last_err}")
 
 
+# The testnet network name. Used as the global `--network` on every CLI call,
+# and — because the CLI derives the corechannel `--network-tag` from the current
+# network's name — as the tag embedded in node operations (link/unlink/create).
+# It MUST match:
+#   - `--network testnet` in scripts/crn-up.sh (which links the CRNs), and
+#   - `FILTER_TAG: testnet` on the nodestatus services (deploy/docker-compose.yml),
+# otherwise nodestatus won't process these operations and CRN (un)links are
+# silent no-ops (see test_migration).
+TESTNET_NETWORK = "testnet"
+
+
 @pytest.fixture(scope="session")
 def aleph_cli_config(tmp_path_factory, scheduler_api_url: str) -> str:
-    """Isolated CLI config directory pointing the scheduler at the local testnet.
+    """Isolated CLI config dir defining a `testnet` network as the default.
 
-    Commands that resolve a scheduler URL (`aleph instance show`,
-    `aleph instance ssh`) read it from the current network's config. We set it
-    on the *builtin* network (`mainnet`) in place rather than adding a new
-    named network and switching to it.
+    Two reasons this exists:
+      1. Scheduler resolution: `aleph instance show` / `instance ssh` read the
+         scheduler URL from the current network's config, so the network's
+         scheduler URL points at the local testnet scheduler.
+      2. Network tag: node operations embed the current network's *name* as the
+         corechannel tag. Naming the network `testnet` makes link/unlink/create
+         operations carry the `testnet` tag, matching crn-up.sh and the
+         nodestatus FILTER_TAG.
 
-    Why this matters: node operations (`node link` / `node unlink`) embed the
-    current network's *name* as the corechannel `--network-tag`. crn-up.sh
-    links the CRNs with the CLI's default config — i.e. tag `mainnet`. If this
-    fixture switched the default network to a differently-named one, every
-    `node unlink` issued via `aleph_cli` would be tagged with that name and no
-    longer match the `mainnet`-tagged link, so the unlink would be a silent
-    no-op and the VM would never migrate (see test_migration). Keeping the
-    builtin name preserves tag parity with crn-up.sh.
-
-    Returned path is exported as XDG_CONFIG_HOME by the aleph_cli fixture so
-    user config in ~/.config/aleph is not touched.
+    Returned path is exported as XDG_CONFIG_HOME by the aleph_cli fixture so the
+    user's own ~/.config/aleph is never touched.
     """
     cfg = tmp_path_factory.mktemp("aleph-cli-config")
     env = {**os.environ, "XDG_CONFIG_HOME": str(cfg)}
-    # `network set` (no --network) updates the current/default network in place,
-    # leaving its name — and thus the node-operation tag — as the builtin default.
-    cmd = ["aleph", "config", "network", "set", "--scheduler-url", scheduler_api_url]
-    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
-    if result.returncode != 0:
-        pytest.fail(f"CLI config setup failed: {' '.join(cmd)}\nStderr: {result.stderr}")
+    for cmd in (
+        ["aleph", "config", "network", "add", TESTNET_NETWORK, "--scheduler-url", scheduler_api_url],
+        ["aleph", "config", "network", "use", TESTNET_NETWORK],
+    ):
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        if result.returncode != 0:
+            pytest.fail(f"CLI config setup failed: {' '.join(cmd)}\nStderr: {result.stderr}")
     return str(cfg)
 
 
 @pytest.fixture(scope="session")
 def aleph_cli(ccn_url: str, private_key: str, aleph_cli_config: str):
     """Return a function that invokes the aleph CLI with pre-configured flags.
+
+    Every call passes `--network testnet` explicitly so the CLI can never fall
+    back to its builtin mainnet network (for scheduler resolution or the
+    corechannel tag). The CCN is always the raw `--ccn` URL, which takes
+    precedence over the network's configured CCN.
 
     Usage:
         result = aleph_cli("file", "upload", "/path/to/file")
@@ -87,11 +99,11 @@ def aleph_cli(ccn_url: str, private_key: str, aleph_cli_config: str):
     missing key) yields None rather than a JSONDecodeError.
     """
     def run(*args: str, parse_json: bool = False, check: bool = True) -> subprocess.CompletedProcess | dict | list | None:
-        cmd = ["aleph", "--ccn", ccn_url]
+        cmd = ["aleph", "--ccn", ccn_url, "--network", TESTNET_NETWORK]
         if parse_json:
             cmd.append("--json")
         cmd.extend(args)
-        # Signing key + isolated CLI config (for scheduler network resolution).
+        # Signing key + isolated CLI config (for scheduler + network-tag resolution).
         env = {
             **os.environ,
             "ALEPH_PRIVATE_KEY": private_key,

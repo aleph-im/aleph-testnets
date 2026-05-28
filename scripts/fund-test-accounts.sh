@@ -100,8 +100,8 @@ echo "==> Waiting for credit balances on CCN (up to 120s)..."
 for attempt in $(seq 1 24); do
     ALL_FUNDED=true
     for ADDR in "${TEST_ADDRS[@]}"; do
-        BALANCE=$(curl -sf "$CCN_URL/api/v0/addresses/$ADDR/balance" 2>/dev/null \
-            | jq -r '.credit_balance // 0' 2>/dev/null || echo 0)
+        BALANCE=$(aleph --ccn "$CCN_URL" --json account balance "$ADDR" 2>/dev/null \
+            | jq -r '.credits // 0' 2>/dev/null || echo 0)
         if [ "$BALANCE" = "0" ] || [ "$BALANCE" = "null" ]; then
             ALL_FUNDED=false
             break
@@ -132,8 +132,8 @@ echo "    Credit contract:            $CREDIT_ADDR"
 echo ""
 echo "  Test accounts:"
 for ADDR in "${TEST_ADDRS[@]}"; do
-    CREDITS=$(curl -sf "$CCN_URL/api/v0/addresses/$ADDR/balance" 2>/dev/null \
-        | jq -r '.credit_balance // 0' 2>/dev/null || echo "?")
+    CREDITS=$(aleph --ccn "$CCN_URL" --json account balance "$ADDR" 2>/dev/null \
+        | jq -r '.credits // 0' 2>/dev/null || echo "?")
     ALEPH_RAW=$(cast_run call --rpc-url http://anvil:8545 \
         "$MOCKALEPH_ADDR" "balanceOf(address)(uint256)" "$ADDR" 2>/dev/null | head -1 || echo "?")
     if [ "$ALEPH_RAW" != "?" ]; then

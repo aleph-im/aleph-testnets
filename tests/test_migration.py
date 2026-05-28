@@ -1,31 +1,26 @@
 """Integration test for VM migration between CRNs.
 
-Flow: create instance → SSH on initial CRN + write a marker file → unlink that CRN →
-verify scheduler reallocates → SSH on new CRN + verify the marker survived (disk
-state preserved across migration).
+Flow: create instance → SSH on initial CRN + write a marker file → unlink that
+CRN → wait for scheduler to reallocate → SSH on new CRN + verify the marker
+survived (disk state preserved across migration).
+
+Discovery, SSH, and node operations all go through the CLI: `aleph instance
+show --verbose` (scheduler placement + CRN networking + mapped ports),
+`aleph instance ssh` (IPv6), `aleph node unlink`.
 
 Requires:
 - Two CRNs provisioned and linked (CRN_COUNT=2)
 - Scheduler-rs with dispatch enabled
 - Ubuntu rootfs image (ALEPH_TESTNET_ROOTFS)
 """
-import json
-import subprocess
 import time
-import urllib.request
-import urllib.error
 import uuid
-from urllib.parse import urlparse
 
 import pytest
 
 
 def _poll(description, fetch, timeout, interval=5):
-    """Poll fetch() until it returns a truthy value or timeout is reached.
-
-    fetch() should return the result on success or None to keep polling.
-    It may raise to keep polling (exceptions are swallowed until timeout).
-    """
+    """Poll fetch() until it returns a truthy value or timeout is reached."""
     deadline = time.time() + timeout
     last_err = None
     while time.time() < deadline:
@@ -39,119 +34,75 @@ def _poll(description, fetch, timeout, interval=5):
     pytest.fail(f"{description} did not succeed within {timeout}s (last error: {last_err})")
 
 
-def _http_get_json(url):
-    """GET a URL and return parsed JSON, or None on HTTP error."""
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return json.loads(resp.read())
-    except (urllib.error.HTTPError, urllib.error.URLError, OSError):
-        return None
+def _vm_ssh_run(aleph_cli, vm_hash, identity, remote_cmd):
+    """Run a single remote command on the VM via `aleph instance ssh`.
 
-
-def _crn_base_url(raw_url) -> tuple[str, str]:
-    """Normalize a CRN URL to (base_url, hostname)."""
-    parsed = urlparse(raw_url)
-    host = parsed.hostname
-    port = parsed.port or 4020
-    return f"http://{host}:{port}", host
-
-
-def _find_crn_hash(crn_nodes, allocation_url):
-    """Match a scheduler allocation URL to a CRN node hash."""
-    alloc_host = urlparse(allocation_url).hostname
-    for node in crn_nodes:
-        if urlparse(node["address"]).hostname == alloc_host:
-            return node["hash"]
-    pytest.fail(
-        f"No CRN in corechannel aggregate matches allocation URL {allocation_url}"
-    )
-
-
-def _ssh_run(private_key_path, host, port, command, timeout=15):
-    """Run a one-shot SSH command and return stdout. Raises on non-zero exit."""
-    result = subprocess.run(
-        [
-            "ssh",
-            "-i", private_key_path,
-            "-p", str(port),
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "ConnectTimeout=5",
-            f"root@{host}",
-            command,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=True,
+    The command string is passed as one positional after `--`, so the remote
+    login shell parses any pipes/redirections.
+    """
+    result = aleph_cli(
+        "instance", "ssh", vm_hash,
+        "--identity", identity,
+        "--", remote_cmd,
     )
     return result.stdout
 
 
-def _wait_for_ssh(private_key_path, host, port, timeout=60):
-    """Poll SSH until 'echo hello' succeeds on the given host:port."""
+def _wait_for_ssh(aleph_cli, vm_hash, identity, timeout=60):
+    """Poll `aleph instance ssh` until 'echo hello' succeeds on the VM."""
     def try_ssh():
-        result = subprocess.run(
-            [
-                "ssh",
-                "-i", private_key_path,
-                "-p", str(port),
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "ConnectTimeout=5",
-                f"root@{host}",
-                "echo hello",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
+        result = aleph_cli(
+            "instance", "ssh", vm_hash,
+            "--identity", identity,
+            "--", "echo", "hello",
+            check=False,
         )
         if result.returncode == 0 and "hello" in result.stdout:
             return result.stdout.strip()
         return None
+    return _poll(f"SSH into VM {vm_hash[:12]}", try_ssh, timeout=timeout)
 
-    return _poll(f"SSH into {host}:{port}", try_ssh, timeout=timeout)
 
-
-def _wait_for_vm_ssh_port(crn_base, instance_hash, timeout=120):
-    """Poll a CRN's execution list until the VM is running with a mapped SSH port."""
-    def fetch_ssh_port():
-        data = _http_get_json(f"{crn_base}/v2/about/executions/list")
-        if not data:
+def _wait_for_dispatched(aleph_cli, vm_hash, timeout=300, *, different_from=None):
+    """Poll `aleph instance show --verbose` until the VM is dispatched with a
+    mapped SSH port. If `different_from` is set, also require the allocated
+    node hash to differ from that value (used to detect post-unlink migration).
+    """
+    def fetch():
+        data = aleph_cli(
+            "instance", "show", vm_hash, "--verbose",
+            parse_json=True, check=False,
+        )
+        if not isinstance(data, dict):
             return None
-        execution = data.get(instance_hash)
-        if not execution:
+        node = data.get("placement", {}).get("allocated_node")
+        if not node:
             return None
-        if not execution.get("running"):
+        if different_from is not None and node == different_from:
             return None
-        networking = execution.get("networking", {})
-        mapped_ports = networking.get("mapped_ports", {})
-        port_22 = mapped_ports.get("22") or mapped_ports.get(22)
-        if port_22 and port_22.get("host"):
-            return int(port_22["host"])
-        return None
-
-    return _poll(f"VM boot + SSH port on {crn_base}", fetch_ssh_port, timeout=timeout)
+        mapped = data.get("mapped_ports") or {}
+        if mapped.get("22") is None:
+            return None
+        return data
+    label = f"VM {vm_hash[:12]} dispatched + SSH port"
+    if different_from is not None:
+        label += f" (different from {different_from[:12]})"
+    return _poll(label, fetch, timeout=timeout)
 
 
 @pytest.mark.timeout(900)
-def test_instance_migration(
-    aleph_cli, rootfs_image, ssh_key_pair, scheduler_api_url, crn_nodes
-):
+def test_instance_migration(aleph_cli, rootfs_image, ssh_key_pair, crn_nodes):
     """End-to-end: create instance → SSH → unlink CRN → scheduler migrates → SSH on new CRN."""
     private_key_path, public_key_path = ssh_key_pair
 
     # --- Phase 1: Create instance and verify on initial CRN ---
 
-    # Upload rootfs
     upload_result = aleph_cli(
         "file", "upload", rootfs_image, "--storage-engine", "storage", "--chain", "eth", parse_json=True
     )
     rootfs_hash = upload_result["item_hash"]
     assert rootfs_hash, "Upload should return an item_hash"
 
-    # Create instance
     instance_result = aleph_cli(
         "instance", "create",
         "migration-instance",
@@ -166,79 +117,37 @@ def test_instance_migration(
     instance_hash = instance_result["item_hash"]
     assert instance_hash, "Instance create should return an item_hash"
 
-    # Poll scheduler-api for initial allocation
-    def fetch_allocation():
-        data = _http_get_json(
-            f"{scheduler_api_url}/api/v0/allocation/{instance_hash}"
-        )
-        if data and data.get("node", {}).get("url"):
-            return data
-        return None
+    initial = _wait_for_dispatched(aleph_cli, instance_hash, timeout=300)
+    initial_crn_hash = initial["placement"]["allocated_node"]
+    assert initial_crn_hash, "Placement should expose a CRN node hash"
 
-    allocation = _poll("Scheduler allocation", fetch_allocation, timeout=180)
-    initial_crn_url = allocation["node"]["url"]
-    assert initial_crn_url, "Allocation should include a CRN URL"
+    _wait_for_ssh(aleph_cli, instance_hash, private_key_path, timeout=60)
 
-    initial_crn_base, initial_crn_host = _crn_base_url(initial_crn_url)
-
-    # Wait for VM to boot on initial CRN
-    ssh_port = _wait_for_vm_ssh_port(initial_crn_base, instance_hash, timeout=120)
-
-    # SSH baseline check
-    output = _wait_for_ssh(private_key_path, initial_crn_host, ssh_port, timeout=60)
-    assert "hello" in output
-
-    # Write a unique marker so we can verify disk state survives migration.
-    # `sync` flushes the page cache before the VM is stopped by the unlink.
+    # Persist a marker we'll verify after migration. `sync` flushes the page
+    # cache before the VM is stopped by the unlink so the marker hits disk.
     marker = uuid.uuid4().hex
-    _ssh_run(
-        private_key_path, initial_crn_host, ssh_port,
+    _vm_ssh_run(
+        aleph_cli, instance_hash, private_key_path,
         f"echo {marker} > /root/migration-marker.txt && sync",
     )
 
     # --- Phase 2: Unlink the initial CRN and verify migration ---
 
-    # Find the CRN's node hash
-    crn_hash = _find_crn_hash(crn_nodes, initial_crn_url)
+    aleph_cli("node", "unlink", "--crn", initial_crn_hash, "--chain", "eth")
 
-    # Unlink the CRN from the CCN
-    aleph_cli("node", "unlink", "--crn", crn_hash, "--chain", "eth")
-
-    # Poll scheduler-api until the allocation moves to a different CRN
-    def fetch_new_allocation():
-        data = _http_get_json(
-            f"{scheduler_api_url}/api/v0/allocation/{instance_hash}"
-        )
-        if not data or not data.get("node", {}).get("url"):
-            return None
-        new_url = data["node"]["url"]
-        # Must be a *different* CRN than the initial one
-        new_host = urlparse(new_url).hostname
-        if new_host != initial_crn_host:
-            return data
-        return None
-
-    new_allocation = _poll(
-        "Scheduler reallocation to new CRN", fetch_new_allocation, timeout=300
+    migrated = _wait_for_dispatched(
+        aleph_cli, instance_hash, timeout=300, different_from=initial_crn_hash,
     )
-    new_crn_url = new_allocation["node"]["url"]
-    new_crn_base, new_crn_host = _crn_base_url(new_crn_url)
-
-    assert new_crn_host != initial_crn_host, (
-        f"Scheduler should migrate to a different CRN, "
-        f"but got the same host: {new_crn_host}"
+    new_crn_hash = migrated["placement"]["allocated_node"]
+    assert new_crn_hash != initial_crn_hash, (
+        f"Scheduler should migrate to a different CRN, but got {new_crn_hash}"
     )
 
-    # Wait for VM to boot on the new CRN
-    new_ssh_port = _wait_for_vm_ssh_port(new_crn_base, instance_hash, timeout=180)
-
-    # SSH into the migrated VM
-    output = _wait_for_ssh(private_key_path, new_crn_host, new_ssh_port, timeout=60)
-    assert "hello" in output
+    _wait_for_ssh(aleph_cli, instance_hash, private_key_path, timeout=60)
 
     # Verify disk state was preserved: the marker written on CRN A must still be there.
-    persisted = _ssh_run(
-        private_key_path, new_crn_host, new_ssh_port,
+    persisted = _vm_ssh_run(
+        aleph_cli, instance_hash, private_key_path,
         "cat /root/migration-marker.txt",
     ).strip()
     assert persisted == marker, (

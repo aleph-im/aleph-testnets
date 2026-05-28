@@ -44,20 +44,76 @@ def ccn_ready(ccn_url: str):
 
 
 @pytest.fixture(scope="session")
-def aleph_cli(ccn_url: str, private_key: str):
+def aleph_cli_config(tmp_path_factory, scheduler_api_url: str) -> str:
+    """Isolated CLI config directory with a 'testnet' network as default.
+
+    Commands that resolve a scheduler URL (`aleph instance show`,
+    `aleph instance ssh`) read it from the current network's config. Without
+    this fixture they'd hit the CLI's builtin mainnet scheduler.
+
+    Returned path is exported as XDG_CONFIG_HOME by the aleph_cli fixture so
+    user config in ~/.config/aleph is not touched.
+    """
+    cfg = tmp_path_factory.mktemp("aleph-cli-config")
+    env = {**os.environ, "XDG_CONFIG_HOME": str(cfg)}
+    for cmd in (
+        ["aleph", "config", "network", "add", "testnet", "--scheduler-url", scheduler_api_url],
+        ["aleph", "config", "network", "use", "testnet"],
+    ):
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        if result.returncode != 0:
+            pytest.fail(f"CLI config setup failed: {' '.join(cmd)}\nStderr: {result.stderr}")
+    return str(cfg)
+
+
+@pytest.fixture(scope="session")
+def _ssh_home(tmp_path_factory) -> str:
+    """An ssh-friendly HOME directory carrying a permissive ssh_config.
+
+    `aleph instance ssh` spawns `ssh` directly and exposes no `ssh -o`
+    passthrough. Pointing $HOME at this directory makes ssh pick up our
+    `~/.ssh/config` (StrictHostKeyChecking=no, ephemeral known_hosts) so it
+    connects to fresh testnet VMs without prompting.
+    """
+    home = tmp_path_factory.mktemp("ssh-home")
+    ssh_dir = home / ".ssh"
+    ssh_dir.mkdir(mode=0o700)
+    (ssh_dir / "config").write_text(
+        "Host *\n"
+        "  StrictHostKeyChecking no\n"
+        "  UserKnownHostsFile /dev/null\n"
+        "  ConnectTimeout 5\n"
+        "  LogLevel ERROR\n"
+    )
+    return str(home)
+
+
+@pytest.fixture(scope="session")
+def aleph_cli(ccn_url: str, private_key: str, aleph_cli_config: str, _ssh_home: str):
     """Return a function that invokes the aleph CLI with pre-configured flags.
 
     Usage:
         result = aleph_cli("file", "upload", "/path/to/file")
         result = aleph_cli("post", "list", "--channels", "test", parse_json=True)
+
+    With `parse_json=True`, an empty stdout (e.g. `aggregate get` on a
+    missing key) yields None rather than a JSONDecodeError.
     """
-    def run(*args: str, parse_json: bool = False, check: bool = True) -> subprocess.CompletedProcess | dict:
+    def run(*args: str, parse_json: bool = False, check: bool = True) -> subprocess.CompletedProcess | dict | list | None:
         cmd = ["aleph", "--ccn", ccn_url]
         if parse_json:
             cmd.append("--json")
         cmd.extend(args)
-        # For commands that need signing, inject the private key via env var
-        env = {**os.environ, "ALEPH_PRIVATE_KEY": private_key}
+        # Signing key + isolated CLI config (for scheduler network resolution).
+        env = {
+            **os.environ,
+            "ALEPH_PRIVATE_KEY": private_key,
+            "XDG_CONFIG_HOME": aleph_cli_config,
+        }
+        # `aleph instance ssh` shells out to `ssh` without exposing `-o`
+        # passthrough; override $HOME so it picks up our permissive ssh_config.
+        if len(args) >= 2 and args[0] == "instance" and args[1] == "ssh":
+            env["HOME"] = _ssh_home
         result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if check and result.returncode != 0:
             pytest.fail(
@@ -67,7 +123,7 @@ def aleph_cli(ccn_url: str, private_key: str):
                 f"Stderr: {result.stderr}"
             )
         if parse_json:
-            return json.loads(result.stdout)
+            return json.loads(result.stdout) if result.stdout.strip() else None
         return result
     return run
 
@@ -111,17 +167,14 @@ def ccn_messages(ccn_url: str):
 
 
 @pytest.fixture(scope="session")
-def ccn_aggregates(ccn_url: str):
-    """Return a function that fetches an aggregate from the CCN."""
+def ccn_aggregates(aleph_cli):
+    """Return a function that fetches an aggregate via `aleph aggregate get`.
+
+    Returns None if the aggregate does not exist (the CLI exits 0 with empty
+    stdout and a stderr note in that case).
+    """
     def get(address: str, key: str) -> dict | None:
-        url = f"{ccn_url}/api/v0/aggregates/{address}.json?keys={key}"
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        try:
-            resp = urllib.request.urlopen(req, timeout=10)
-            data = json.loads(resp.read())
-            return data.get("data", {}).get(key)
-        except urllib.error.HTTPError:
-            return None
+        return aleph_cli("aggregate", "get", key, "--address", address, parse_json=True)
     return get
 
 
@@ -262,19 +315,23 @@ def cast_call(anvil_rpc: str):
 
 
 @pytest.fixture(scope="session")
-def crn_nodes(ccn_aggregates):
-    """Registered CRN entries from the corechannel aggregate.
+def crn_nodes(aleph_cli):
+    """Registered CRN entries from the testnet's corechannel aggregate.
 
-    Returns a list of dicts, each with at least 'hash' and 'address' keys.
-    Requires CRN_COUNT=2 (or more) during provisioning.
+    Returns a list of dicts, each with at least 'hash' and 'address' keys
+    (the `address` field is the CRN's HTTP endpoint URL). Requires CRN_COUNT=2
+    or more during provisioning.
     """
     NODESTATUS_ADDR = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-    agg = ccn_aggregates(NODESTATUS_ADDR, "corechannel")
-    if agg is None:
-        pytest.skip("No corechannel aggregate — migration tests require registered CRNs")
-    resource_nodes = agg.get("resource_nodes", [])
-    if len(resource_nodes) < 2:
-        pytest.skip(
-            f"Need at least 2 CRNs for migration tests, found {len(resource_nodes)}"
-        )
-    return resource_nodes
+    nodes = aleph_cli(
+        "node", "list",
+        "--type", "crn",
+        "--all",
+        "--corechannel-address", NODESTATUS_ADDR,
+        parse_json=True,
+    )
+    if not nodes:
+        pytest.skip("No CRNs registered — migration tests require registered CRNs")
+    if len(nodes) < 2:
+        pytest.skip(f"Need at least 2 CRNs for migration tests, found {len(nodes)}")
+    return nodes

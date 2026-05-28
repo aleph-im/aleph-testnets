@@ -378,8 +378,9 @@ register_crn() {
     # not under the sender's address.  Filter nodes by owner to find ours.
     echo "==> Ensuring CCN exists for owner $CRN_OWNER_ADDR ..."
     local ccn_nodes
-    ccn_nodes=$(curl -sf "$ccn_url/api/v0/aggregates/$NODESTATUS_ADDR.json?keys=corechannel" \
-        | jq -r "[.data.corechannel.nodes // [] | .[] | select(.owner == \"$CRN_OWNER_ADDR\")] | length" 2>/dev/null || echo "0")
+    ccn_nodes=$("$aleph_cli" --ccn "$ccn_url" --json node list \
+        --type ccn --address "$CRN_OWNER_ADDR" --corechannel-address "$NODESTATUS_ADDR" \
+        2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
     if [ "$ccn_nodes" = "0" ]; then
         echo "    No CCN found — creating one..."
         ALEPH_PRIVATE_KEY="$CRN_OWNER_KEY" "$aleph_cli" \
@@ -394,8 +395,9 @@ register_crn() {
         # Wait for nodestatus to process the CCN creation
         echo "    Waiting for CCN to appear in corechannel aggregate..."
         for _ in $(seq 1 24); do
-            ccn_nodes=$(curl -sf "$ccn_url/api/v0/aggregates/$NODESTATUS_ADDR.json?keys=corechannel" \
-                | jq -r "[.data.corechannel.nodes // [] | .[] | select(.owner == \"$CRN_OWNER_ADDR\")] | length" 2>/dev/null || echo "0")
+            ccn_nodes=$("$aleph_cli" --ccn "$ccn_url" --json node list \
+                --type ccn --address "$CRN_OWNER_ADDR" --corechannel-address "$NODESTATUS_ADDR" \
+                2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
             if [ "$ccn_nodes" != "0" ]; then
                 echo "    CCN is registered."
                 break
@@ -439,9 +441,10 @@ register_crn() {
             echo "    Response: $output"
             echo "    Trying to find node hash from corechannel aggregate..."
 
-            # Fallback: look up the CRN in the aggregate by address
-            crn_hash=$(curl -sf "$ccn_url/api/v0/aggregates/$NODESTATUS_ADDR.json?keys=corechannel" \
-                | jq -r ".data.corechannel.resource_nodes[] | select(.address == \"$crn_addr\") | .hash" 2>/dev/null || true)
+            # Fallback: look up the CRN in the corechannel aggregate by address
+            crn_hash=$("$aleph_cli" --ccn "$ccn_url" --json node list \
+                --type crn --all --corechannel-address "$NODESTATUS_ADDR" \
+                2>/dev/null | jq -r ".[] | select(.address == \"$crn_addr\") | .hash" 2>/dev/null || true)
         fi
 
         if [ -z "$crn_hash" ]; then

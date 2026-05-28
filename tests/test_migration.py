@@ -166,8 +166,12 @@ def test_instance_migration(aleph_cli, rootfs_image, ssh_key_pair, crn_nodes):
 
     aleph_cli("node", "unlink", "--crn", initial_crn_hash, "--chain", "eth")
 
+    # The original code split this into two polls (300s for the scheduler to
+    # move the allocation, then 180s for the new CRN to boot the VM + map
+    # SSH). `instance show` lets us condition on both at once, but the budget
+    # has to cover the sum.
     migrated = _wait_for_dispatched(
-        aleph_cli, instance_hash, timeout=300, different_from=initial_crn_hash,
+        aleph_cli, instance_hash, timeout=540, different_from=initial_crn_hash,
     )
     new_crn_hash = migrated["placement"]["allocated_node"]
     assert new_crn_hash != initial_crn_hash, (

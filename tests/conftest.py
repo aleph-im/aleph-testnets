@@ -67,29 +67,7 @@ def aleph_cli_config(tmp_path_factory, scheduler_api_url: str) -> str:
 
 
 @pytest.fixture(scope="session")
-def _ssh_home(tmp_path_factory) -> str:
-    """An ssh-friendly HOME directory carrying a permissive ssh_config.
-
-    `aleph instance ssh` spawns `ssh` directly and exposes no `ssh -o`
-    passthrough. Pointing $HOME at this directory makes ssh pick up our
-    `~/.ssh/config` (StrictHostKeyChecking=no, ephemeral known_hosts) so it
-    connects to fresh testnet VMs without prompting.
-    """
-    home = tmp_path_factory.mktemp("ssh-home")
-    ssh_dir = home / ".ssh"
-    ssh_dir.mkdir(mode=0o700)
-    (ssh_dir / "config").write_text(
-        "Host *\n"
-        "  StrictHostKeyChecking no\n"
-        "  UserKnownHostsFile /dev/null\n"
-        "  ConnectTimeout 5\n"
-        "  LogLevel ERROR\n"
-    )
-    return str(home)
-
-
-@pytest.fixture(scope="session")
-def aleph_cli(ccn_url: str, private_key: str, aleph_cli_config: str, _ssh_home: str):
+def aleph_cli(ccn_url: str, private_key: str, aleph_cli_config: str):
     """Return a function that invokes the aleph CLI with pre-configured flags.
 
     Usage:
@@ -110,10 +88,6 @@ def aleph_cli(ccn_url: str, private_key: str, aleph_cli_config: str, _ssh_home: 
             "ALEPH_PRIVATE_KEY": private_key,
             "XDG_CONFIG_HOME": aleph_cli_config,
         }
-        # `aleph instance ssh` shells out to `ssh` without exposing `-o`
-        # passthrough; override $HOME so it picks up our permissive ssh_config.
-        if len(args) >= 2 and args[0] == "instance" and args[1] == "ssh":
-            env["HOME"] = _ssh_home
         result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if check and result.returncode != 0:
             pytest.fail(
@@ -168,13 +142,18 @@ def ccn_messages(ccn_url: str):
 
 @pytest.fixture(scope="session")
 def ccn_aggregates(aleph_cli):
-    """Return a function that fetches an aggregate via `aleph aggregate get`.
+    """Return a function that fetches an aggregate value via `aleph aggregate get`.
 
+    Returns the unwrapped value at `key` (matching the urllib-based fixture's
+    contract). The CLI emits `{"<key>": <value>}` — we drop the wrapping.
     Returns None if the aggregate does not exist (the CLI exits 0 with empty
-    stdout and a stderr note in that case).
+    stdout in that case).
     """
     def get(address: str, key: str) -> dict | None:
-        return aleph_cli("aggregate", "get", key, "--address", address, parse_json=True)
+        raw = aleph_cli("aggregate", "get", key, "--address", address, parse_json=True)
+        if not isinstance(raw, dict):
+            return None
+        return raw.get(key)
     return get
 
 

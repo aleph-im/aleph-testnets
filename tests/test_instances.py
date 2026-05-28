@@ -1,15 +1,15 @@
+import subprocess
 import time
+from urllib.parse import urlparse
 
 import pytest
 
+# Nodestatus account: owns the testnet's corechannel aggregate (registered CRNs).
+NODESTATUS_ADDR = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+
 
 def _poll(description, fetch, timeout, interval=5):
-    """Poll fetch() until it returns a truthy value or timeout is reached.
-
-    fetch() should return the result on success or None to keep polling.
-    Exceptions are swallowed until the deadline (the last one is reported on
-    failure).
-    """
+    """Poll fetch() until it returns a truthy value or timeout is reached."""
     deadline = time.time() + timeout
     last_err = None
     while time.time() < deadline:
@@ -23,24 +23,38 @@ def _poll(description, fetch, timeout, interval=5):
     pytest.fail(f"{description} did not succeed within {timeout}s (last error: {last_err})")
 
 
+def _resolve_crn_host(aleph_cli, crn_hash: str) -> str:
+    """Return the CRN's reachable hostname (from its registered URL in the
+    corechannel aggregate), given the node hash from `instance show` placement.
+    """
+    nodes = aleph_cli(
+        "node", "list", "--type", "crn", "--all",
+        "--corechannel-address", NODESTATUS_ADDR,
+        parse_json=True,
+    )
+    for n in nodes or []:
+        if n.get("hash") == crn_hash:
+            return urlparse(n["address"]).hostname
+    pytest.fail(f"CRN {crn_hash} not found in corechannel aggregate")
+
+
 @pytest.mark.timeout(420)
 def test_instance_create_and_ssh(aleph_cli, rootfs_image, ssh_key_pair):
     """End-to-end: create instance → scheduler dispatches → CRN boots → SSH in.
 
-    Discovery (scheduler placement + CRN networking + mapped SSH port) is
-    delegated to `aleph instance show --verbose`. The SSH step uses
-    `aleph instance ssh` (which connects over the VM's IPv6).
+    Discovery uses `aleph instance show --verbose` (scheduler placement +
+    CRN-reported mapped ports in one call). SSH goes over the CRN's IPv4 plus
+    the host-side mapped port — the CLI's own `instance ssh` connects via the
+    VM's IPv6 which isn't reachable in this CI.
     """
     private_key_path, public_key_path = ssh_key_pair
 
-    # Step 1: Upload rootfs to CCN
     upload_result = aleph_cli(
         "file", "upload", rootfs_image, "--storage-engine", "storage", "--chain", "eth", parse_json=True
     )
     rootfs_hash = upload_result["item_hash"]
     assert rootfs_hash, "Upload should return an item_hash"
 
-    # Step 2: Create instance
     instance_result = aleph_cli(
         "instance", "create",
         "test-instance",
@@ -55,33 +69,39 @@ def test_instance_create_and_ssh(aleph_cli, rootfs_image, ssh_key_pair):
     instance_hash = instance_result["item_hash"]
     assert instance_hash, "Instance create should return an item_hash"
 
-    # Step 3: Wait for scheduler dispatch + CRN boot + SSH port mapping.
-    # `instance show --verbose` rolls up the CCN INSTANCE message, scheduler
-    # placement, and live CRN networking in one call. The presence of a host
-    # port for VM port 22 means the VM is running with SSH reachable.
-    def vm_has_ssh_port():
+    # Wait for scheduler dispatch + CRN boot + SSH port mapping.
+    def vm_ready():
         data = aleph_cli(
             "instance", "show", instance_hash, "--verbose",
             parse_json=True, check=False,
         )
         if not isinstance(data, dict):
             return None
+        node = data.get("placement", {}).get("allocated_node")
         mapped = data.get("mapped_ports") or {}
-        # `mapped_ports` is keyed by VM port (string in JSON).
-        if mapped.get("22") is not None:
+        if node and mapped.get("22") is not None:
             return data
         return None
 
-    _poll("Instance dispatched + SSH port mapped", vm_has_ssh_port, timeout=300)
+    show = _poll("Instance dispatched + SSH port mapped", vm_ready, timeout=300)
+    crn_host = _resolve_crn_host(aleph_cli, show["placement"]["allocated_node"])
+    ssh_port = int(show["mapped_ports"]["22"])
 
-    # Step 4: SSH in via the CLI. Polls because sshd inside the VM may need a
-    # moment after the port shows up to accept connections.
     def try_ssh():
-        result = aleph_cli(
-            "instance", "ssh", instance_hash,
-            "--identity", private_key_path,
-            "--", "echo", "hello",
-            check=False,
+        result = subprocess.run(
+            [
+                "ssh",
+                "-i", private_key_path,
+                "-p", str(ssh_port),
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "ConnectTimeout=5",
+                f"root@{crn_host}",
+                "echo hello",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         if result.returncode == 0 and "hello" in result.stdout:
             return result.stdout.strip()

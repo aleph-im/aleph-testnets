@@ -36,7 +36,7 @@ def test_instance_logs(running_vm, aleph_cli):
     (the aleph_cli fixture returns the partial capture on TimeoutExpired) and
     assert we received non-empty console output.
     """
-    result = aleph_cli("instance", "logs", running_vm.hash, timeout=25)
+    result = aleph_cli("instance", "logs", running_vm.hash, "--chain", "eth", timeout=25)
     assert result.stdout.strip(), (
         f"Expected non-empty logs from the VM. stderr: {result.stderr!r}"
     )

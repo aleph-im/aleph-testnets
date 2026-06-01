@@ -32,7 +32,7 @@ def test_instance_backup_restore(backup_vm, aleph_cli, ssh_key_pair, tmp_path):
     # Create the backup (blocks until complete) and download the archive.
     aleph_cli("instance", "backup", "create", backup_vm.hash, "--follow", "--chain", "eth")
     archive = tmp_path / "backup.tar"
-    aleph_cli("instance", "backup", "download", backup_vm.hash, "-o", str(archive))
+    aleph_cli("instance", "backup", "download", backup_vm.hash, "-o", str(archive), "--chain", "eth")
     assert archive.exists() and archive.stat().st_size > 0, "Backup archive should be non-empty"
 
     # Mutate the sentinel after the backup, then restore from the archive.

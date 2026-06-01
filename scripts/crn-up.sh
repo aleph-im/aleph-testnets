@@ -30,7 +30,7 @@ BIN_DIR="$REPO_ROOT/bin"
 # Defaults
 SSH_KEY_FILE="${SSH_KEY_FILE:-$HOME/.ssh/id_ed25519}"
 DO_REGION="${DO_REGION:-ams3}"
-DO_SIZE="${DO_SIZE:-s-4vcpu-8gb}"
+DO_SIZE="${DO_SIZE:-s-8vcpu-16gb}"
 CRN_COUNT="${CRN_COUNT:-1}"
 ALLOCATION_TOKEN="${ALLOCATION_TOKEN:-allocate-on-testnet}"
 

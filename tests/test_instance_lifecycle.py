@@ -135,3 +135,22 @@ def test_instance_reboot(running_vm, aleph_cli, ssh_key_pair):
 
     after = poll("VM reboot (boot_id change)", new_boot_id, timeout=180)
     assert after != before, "boot_id should change after a real reboot"
+
+
+@pytest.mark.timeout(420)
+def test_instance_stop_start(running_vm, aleph_cli, ssh_key_pair):
+    """`aleph instance stop` brings the VM down; `instance start` brings it back."""
+    private_key_path, _ = ssh_key_pair
+    wait_for_ssh(private_key_path, running_vm.crn_host, running_vm.ssh_port, timeout=60)
+
+    aleph_cli("instance", "stop", running_vm.hash, "--chain", "eth")
+    poll(
+        "VM stopped (SSH unreachable)",
+        lambda: True if not ssh_ok(private_key_path, running_vm.crn_host, running_vm.ssh_port) else None,
+        timeout=120,
+    )
+
+    aleph_cli("instance", "start", running_vm.hash, "--chain", "eth")
+    running_vm.refresh(aleph_cli, timeout=300)  # mapped SSH port may change
+    output = wait_for_ssh(private_key_path, running_vm.crn_host, running_vm.ssh_port, timeout=120)
+    assert output, "VM should be SSH-reachable again after start"

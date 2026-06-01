@@ -98,7 +98,7 @@ def aleph_cli(ccn_url: str, private_key: str, aleph_cli_config: str):
     With `parse_json=True`, an empty stdout (e.g. `aggregate get` on a
     missing key) yields None rather than a JSONDecodeError.
     """
-    def run(*args: str, parse_json: bool = False, check: bool = True) -> subprocess.CompletedProcess | dict | list | None:
+    def run(*args: str, parse_json: bool = False, check: bool = True, timeout: float | None = None) -> subprocess.CompletedProcess | dict | list | None:
         cmd = ["aleph", "--ccn", ccn_url, "--network", TESTNET_NETWORK]
         if parse_json:
             cmd.append("--json")
@@ -109,7 +109,14 @@ def aleph_cli(ccn_url: str, private_key: str, aleph_cli_config: str):
             "ALEPH_PRIVATE_KEY": private_key,
             "XDG_CONFIG_HOME": aleph_cli_config,
         }
-        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            # Streaming commands (e.g. `instance logs`) never exit on their own;
+            # return whatever was captured so far.
+            return subprocess.CompletedProcess(
+                cmd, returncode=None, stdout=e.stdout or "", stderr=e.stderr or "",
+            )
         if check and result.returncode != 0:
             pytest.fail(
                 f"CLI command failed: {' '.join(cmd)}\n"
@@ -235,6 +242,24 @@ def rootfs_image() -> str:
     if not path or not os.path.exists(path):
         pytest.skip("No rootfs image — instance tests require ALEPH_TESTNET_ROOTFS")
     return path
+
+
+@pytest.fixture(scope="session")
+def rootfs_hash(aleph_cli, rootfs_image) -> str:
+    """Upload the rootfs image once per session; return its item_hash.
+
+    Instance tests reuse this instead of each re-uploading the multi-hundred-MB
+    image. Under xdist each worker has its own session, so the upload happens
+    once per worker (idempotent — content-addressed).
+    """
+    result = aleph_cli(
+        "file", "upload", rootfs_image,
+        "--storage-engine", "storage", "--chain", "eth",
+        parse_json=True,
+    )
+    item_hash = result["item_hash"]
+    assert item_hash, "Upload should return an item_hash"
+    return item_hash
 
 
 @pytest.fixture(scope="session")

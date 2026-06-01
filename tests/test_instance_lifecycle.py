@@ -108,3 +108,30 @@ def test_instance_port_forward(running_vm, aleph_cli, ssh_key_pair):
                     "pkill -f http.server || true")
         except Exception:
             pass
+
+
+@pytest.mark.timeout(300)
+def test_instance_reboot(running_vm, aleph_cli, ssh_key_pair):
+    """`aleph instance reboot` restarts the VM; the kernel boot_id changes and
+    the VM becomes SSH-reachable again."""
+    private_key_path, _ = ssh_key_pair
+    before = ssh_run(
+        private_key_path, running_vm.crn_host, running_vm.ssh_port,
+        "cat /proc/sys/kernel/random/boot_id",
+    ).strip()
+    assert before, "Should read a boot_id before reboot"
+
+    aleph_cli("instance", "reboot", running_vm.hash, "--chain", "eth")
+
+    def new_boot_id():
+        try:
+            bid = ssh_run(
+                private_key_path, running_vm.crn_host, running_vm.ssh_port,
+                "cat /proc/sys/kernel/random/boot_id",
+            ).strip()
+        except Exception:
+            return None
+        return bid if bid and bid != before else None
+
+    after = poll("VM reboot (boot_id change)", new_boot_id, timeout=180)
+    assert after != before, "boot_id should change after a real reboot"

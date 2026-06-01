@@ -5,15 +5,24 @@ import uuid
 
 import pytest
 
-from tests.vm_helpers import create_dispatched_instance, ssh_run, wait_for_ssh
+from tests.vm_helpers import (
+    create_dispatched_instance,
+    delete_instance,
+    ssh_run,
+    wait_for_ssh,
+)
 
 
 @pytest.fixture(scope="module")
 def backup_vm(aleph_cli, rootfs_hash, ssh_key_pair):
+    """Own VM (restore rewrites the rootfs). Deleted on teardown so it doesn't
+    hold CRN capacity for the rest of the run."""
     _, public_key_path = ssh_key_pair
-    return create_dispatched_instance(
+    vm = create_dispatched_instance(
         aleph_cli, rootfs_hash, public_key_path, "backup-instance",
     )
+    yield vm
+    delete_instance(aleph_cli, vm.hash)
 
 
 @pytest.mark.timeout(1800)

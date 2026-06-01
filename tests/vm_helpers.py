@@ -128,6 +128,18 @@ class DispatchedVM:
         return self
 
 
+def delete_instance(aleph_cli, vm_hash):
+    """Best-effort FORGET of an instance so the scheduler de-allocates it and the
+    CRN frees the VM's resources. Meant for test/fixture teardown: it never fails
+    the test (`check=False`).
+
+    Cleaning up is not optional hygiene here — leaked VMs occupy CRN capacity, and
+    the migration test needs a free CRN to migrate onto. Every instance-creating
+    test must call this so capacity can't creep up as the suite grows.
+    """
+    aleph_cli("instance", "delete", vm_hash, "--chain", "eth", check=False)
+
+
 def create_dispatched_instance(aleph_cli, rootfs_hash, public_key_path, name, *,
                                vcpus="1", memory="2GiB", disk_size="4GiB", timeout=300) -> DispatchedVM:
     """Create an instance, wait for the scheduler to dispatch it, and resolve

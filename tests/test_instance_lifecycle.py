@@ -10,6 +10,7 @@ import pytest
 
 from tests.vm_helpers import (
     create_dispatched_instance,
+    delete_instance,
     poll,
     ssh_ok,
     ssh_run,
@@ -19,13 +20,18 @@ from tests.vm_helpers import (
 
 @pytest.fixture(scope="module")
 def running_vm(aleph_cli, rootfs_hash, ssh_key_pair):
-    """One dispatched, SSH-reachable VM shared by this module's tests."""
+    """One dispatched, SSH-reachable VM shared by this module's tests.
+
+    Deleted on teardown so it doesn't hold CRN capacity for the rest of the run
+    (the migration test needs a free CRN to migrate onto).
+    """
     private_key_path, public_key_path = ssh_key_pair
     vm = create_dispatched_instance(
         aleph_cli, rootfs_hash, public_key_path, "lifecycle-instance",
     )
     wait_for_ssh(private_key_path, vm.crn_host, vm.ssh_port, timeout=120)
-    return vm
+    yield vm
+    delete_instance(aleph_cli, vm.hash)
 
 
 @pytest.mark.timeout(420)

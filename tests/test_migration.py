@@ -13,6 +13,7 @@ import pytest
 
 from tests.vm_helpers import (
     create_dispatched_instance,
+    delete_instance,
     resolve_crn_host,
     ssh_run,
     wait_for_dispatched,
@@ -29,38 +30,41 @@ def test_instance_migration(aleph_cli, rootfs_hash, ssh_key_pair, crn_nodes):
     vm = create_dispatched_instance(
         aleph_cli, rootfs_hash, public_key_path, "migration-instance",
     )
-    wait_for_ssh(private_key_path, vm.crn_host, vm.ssh_port, timeout=60)
+    try:
+        wait_for_ssh(private_key_path, vm.crn_host, vm.ssh_port, timeout=60)
 
-    # Persist a marker we'll verify after migration. `sync` flushes the page
-    # cache before the VM is stopped by the unlink so the marker hits disk.
-    marker = uuid.uuid4().hex
-    ssh_run(
-        private_key_path, vm.crn_host, vm.ssh_port,
-        f"echo {marker} > /root/migration-marker.txt && sync",
-    )
+        # Persist a marker we'll verify after migration. `sync` flushes the page
+        # cache before the VM is stopped by the unlink so the marker hits disk.
+        marker = uuid.uuid4().hex
+        ssh_run(
+            private_key_path, vm.crn_host, vm.ssh_port,
+            f"echo {marker} > /root/migration-marker.txt && sync",
+        )
 
-    # --- Phase 2: Unlink the initial CRN and verify migration ---
-    aleph_cli("node", "unlink", "--crn", vm.crn_hash, "--chain", "eth")
+        # --- Phase 2: Unlink the initial CRN and verify migration ---
+        aleph_cli("node", "unlink", "--crn", vm.crn_hash, "--chain", "eth")
 
-    # Budget covers both the scheduler moving the allocation and the new CRN
-    # booting the VM + mapping SSH.
-    migrated = wait_for_dispatched(
-        aleph_cli, vm.hash, timeout=540, different_from=vm.crn_hash,
-    )
-    new_crn_hash = migrated["placement"]["allocated_node"]
-    assert new_crn_hash != vm.crn_hash, (
-        f"Scheduler should migrate to a different CRN, but got {new_crn_hash}"
-    )
-    new_host = resolve_crn_host(aleph_cli, new_crn_hash)
-    new_port = int(migrated["mapped_ports"]["22"])
+        # Budget covers both the scheduler moving the allocation and the new CRN
+        # booting the VM + mapping SSH.
+        migrated = wait_for_dispatched(
+            aleph_cli, vm.hash, timeout=540, different_from=vm.crn_hash,
+        )
+        new_crn_hash = migrated["placement"]["allocated_node"]
+        assert new_crn_hash != vm.crn_hash, (
+            f"Scheduler should migrate to a different CRN, but got {new_crn_hash}"
+        )
+        new_host = resolve_crn_host(aleph_cli, new_crn_hash)
+        new_port = int(migrated["mapped_ports"]["22"])
 
-    wait_for_ssh(private_key_path, new_host, new_port, timeout=60)
+        wait_for_ssh(private_key_path, new_host, new_port, timeout=60)
 
-    persisted = ssh_run(
-        private_key_path, new_host, new_port,
-        "cat /root/migration-marker.txt",
-    ).strip()
-    assert persisted == marker, (
-        f"Migration should preserve disk state — expected marker {marker!r} "
-        f"but got {persisted!r}"
-    )
+        persisted = ssh_run(
+            private_key_path, new_host, new_port,
+            "cat /root/migration-marker.txt",
+        ).strip()
+        assert persisted == marker, (
+            f"Migration should preserve disk state — expected marker {marker!r} "
+            f"but got {persisted!r}"
+        )
+    finally:
+        delete_instance(aleph_cli, vm.hash)

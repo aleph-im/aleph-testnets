@@ -266,6 +266,9 @@ services:
       ALEPH_SCHEDULER_SKIP_HARDCODED_NODES: "true"
       ALEPH_SCHEDULER_NO_DISPATCH: "false"
       ALEPH_SCHEDULER_MIGRATIONS_ENABLED: "true"
+      # Unlink debounce (aleph-vm-scheduler#176) delays rescheduling after a CRN
+      # unlink; disable it so migration tests don't wait out the debounce window.
+      ALEPH_SCHEDULER_UNLINK_DEBOUNCE_SECS: "0"
       ALEPH_SCHEDULER_CRN_AUTH_TOKEN: "allocate-on-testnet"
       ALEPH_SCHEDULER_REDIS_URL: redis://redis:6379
       ALEPH_SCHEDULER_DATA_DIR: /app

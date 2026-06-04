@@ -128,15 +128,23 @@ jobs:
           # CCN: wait for cloud-init, install docker + foundry + pip + gh
           # (gh is needed when manifesto.yml deploys aleph-vm from a branch, so
           #  crn-up.sh can download the .deb artifact from aleph-im/aleph-vm CI.)
+          # NEEDRESTART_SUSPEND stops needrestart from bouncing sshd after
+          # apt upgrades libc/openssh, which resets in-flight and immediately
+          # following SSH connections (kex_exchange_identification flakes).
+          # Disabling the apt timers prevents the same restart from happening
+          # at a random later point mid-run via unattended-upgrades.
           (
             ssh root@${DROPLET_IPV4} "cloud-init status --wait || true"
+            ssh root@${DROPLET_IPV4} "systemctl disable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service 2>/dev/null || true"
             ssh root@${DROPLET_IPV4} "while fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 2; done"
             ssh root@${DROPLET_IPV4} "mkdir -p -m 755 /etc/apt/keyrings && \
               curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null && \
               chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
               echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' > /etc/apt/sources.list.d/github-cli.list"
-            ssh root@${DROPLET_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
-            ssh root@${DROPLET_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io docker-compose-v2 python3-pip jq curl gh"
+            ssh root@${DROPLET_IPV4} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
+            ssh root@${DROPLET_IPV4} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io docker-compose-v2 python3-pip jq curl gh"
+            # Let sshd settle in case apt restarted it anyway.
+            for i in $(seq 1 20); do ssh root@${DROPLET_IPV4} true 2>/dev/null && break; sleep 3; done
           ) &
           CCN_PID=$!
 
@@ -149,10 +157,13 @@ jobs:
             ip="${!ip_var}"
             (
               ssh root@${ip} "cloud-init status --wait || true"
+              ssh root@${ip} "systemctl disable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service 2>/dev/null || true"
               ssh root@${ip} "while fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 2; done"
-              ssh root@${ip} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
-              ssh root@${ip} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
-              ssh root@${ip} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
+              ssh root@${ip} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
+              ssh root@${ip} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
+              ssh root@${ip} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
+              # Let sshd settle in case apt restarted it anyway.
+              for i in $(seq 1 20); do ssh root@${ip} true 2>/dev/null && break; sleep 3; done
             ) &
             CRN_PIDS+=($!)
           done

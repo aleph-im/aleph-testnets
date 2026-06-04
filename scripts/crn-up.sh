@@ -14,7 +14,7 @@
 #   SSH_KEY_FILE        Path to SSH private key for droplet access (optional, defaults to ~/.ssh/id_ed25519)
 #   DO_SSH_KEY_FINGERPRINT  SSH key fingerprint registered with DigitalOcean (required for --provision)
 #   DO_REGION           DigitalOcean region (default: ams3)
-#   DO_SIZE             Droplet size (default: s-4vcpu-8gb)
+#   DO_SIZE             Droplet size (default: s-8vcpu-16gb)
 #   CRN_COUNT           Number of CRNs to provision (default: 1)
 #   ALEPH_VM_VERSION    Override aleph-vm version from manifesto
 #   ALEPH_VM_BRANCH     Deploy from a Git branch instead of a release (uses CI artifacts via gh CLI)
@@ -156,8 +156,20 @@ ssh_crn() {
     local idx="$1"; shift
     local ip
     ip=$(crn_ip "$idx")
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -i "$SSH_KEY_FILE" "root@$ip" "$@"
+    # Fresh droplets restart sshd under us (needrestart / unattended-upgrades
+    # after apt activity), resetting connections mid-handshake. Exit 255 is an
+    # ssh-level failure: retry a few times. The remote commands used here are
+    # idempotent, so re-running on a mid-command drop is safe.
+    local attempt rc
+    for attempt in 1 2 3 4 5; do
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i "$SSH_KEY_FILE" "root@$ip" "$@" && return 0
+        rc=$?
+        [ "$rc" -ne 255 ] && return "$rc"
+        echo "    ssh to CRN $idx failed (attempt $attempt/5), retrying in 5s ..." >&2
+        sleep 5
+    done
+    return 255
 }
 
 scp_to_crn() {
@@ -318,9 +330,11 @@ EOF
 
         # System update + dependencies
         echo "    Installing system packages..."
-        ssh_crn "$idx" "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
-        ssh_crn "$idx" "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
-        ssh_crn "$idx" "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
+        # NEEDRESTART_SUSPEND stops needrestart from bouncing sshd after the
+        # upgrade, which would reset the next SSH connection mid-handshake.
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
 
         # Start vm-connector
         echo "    Starting vm-connector..."
@@ -338,7 +352,7 @@ EOF
             ssh_crn "$idx" "wget -q -O /opt/aleph-vm.deb '$deb_url'"
         fi
         echo "    Installing .deb..."
-        ssh_crn "$idx" "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install -y /opt/aleph-vm.deb"
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install -y /opt/aleph-vm.deb"
 
         # Wait for supervisor to be active
         echo "    Waiting for CRN supervisor..."

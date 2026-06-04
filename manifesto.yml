@@ -25,11 +25,11 @@ components:
     tag: "latest"
 
   scheduler-rs:
-    image: odesenfans/scheduler-rs
+    image: alephim/scheduler-rs
     tag: "0.1.0"
 
   scheduler-api:
-    image: odesenfans/scheduler-api
+    image: alephim/scheduler-api
     tag: "0.1.0"
 
   aleph-vm:

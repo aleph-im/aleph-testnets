@@ -41,11 +41,19 @@ jobs:
           # Keepalives: long-running test commands (notably the migration test)
           # have multi-minute polling phases with no stdout, which lets the
           # CI→droplet SSH session idle out as a "Broken pipe".
+          # ControlMaster: the workflow opens dozens of short-lived SSH
+          # connections in rapid bursts, and fresh droplets intermittently
+          # reset some of them mid-handshake (kex_exchange_identification
+          # flakes). Multiplexing reuses one TCP connection per host, so
+          # only the first connection is exposed to that window.
           cat > ~/.ssh/config <<'EOF'
           Host *
               ServerAliveInterval 30
               ServerAliveCountMax 20
               TCPKeepAlive yes
+              ControlMaster auto
+              ControlPath ~/.ssh/cm-%r@%h-%p
+              ControlPersist 10m
           EOF
           chmod 0600 ~/.ssh/config
 

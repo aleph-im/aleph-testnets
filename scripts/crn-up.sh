@@ -152,32 +152,43 @@ crn_name() {
     cat "$(crn_dir "$idx")/droplet-name"
 }
 
+# Fresh droplets intermittently reset SSH connections mid-handshake
+# (kex_exchange_identification: Connection reset by peer), especially under
+# the rapid bursts of short-lived connections this script makes. Mitigate
+# on two fronts:
+#  - ControlMaster multiplexing: one TCP connection per CRN, reused by all
+#    ssh/scp calls, so only the first connection is exposed to the flake.
+#  - retry_255: retry connection-level failures (ssh/scp exit code 255).
+#    The remote commands used here are idempotent, so re-running is safe.
+SSH_OPTS=(
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    -o ControlMaster=auto -o ControlPath=/tmp/ssh-cm-crn-%r@%h-%p -o ControlPersist=600
+)
+
+retry_255() {
+    local attempt rc
+    for attempt in 1 2 3 4 5; do
+        "$@" && return 0
+        rc=$?
+        [ "$rc" -ne 255 ] && return "$rc"
+        echo "    SSH connection failed (attempt $attempt/5), retrying in 5s ..." >&2
+        sleep 5
+    done
+    return 255
+}
+
 ssh_crn() {
     local idx="$1"; shift
     local ip
     ip=$(crn_ip "$idx")
-    # Fresh droplets restart sshd under us (needrestart / unattended-upgrades
-    # after apt activity), resetting connections mid-handshake. Exit 255 is an
-    # ssh-level failure: retry a few times. The remote commands used here are
-    # idempotent, so re-running on a mid-command drop is safe.
-    local attempt rc
-    for attempt in 1 2 3 4 5; do
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -i "$SSH_KEY_FILE" "root@$ip" "$@" && return 0
-        rc=$?
-        [ "$rc" -ne 255 ] && return "$rc"
-        echo "    ssh to CRN $idx failed (attempt $attempt/5), retrying in 5s ..." >&2
-        sleep 5
-    done
-    return 255
+    retry_255 ssh "${SSH_OPTS[@]}" -i "$SSH_KEY_FILE" "root@$ip" "$@"
 }
 
 scp_to_crn() {
     local idx="$1"; shift
     local ip
     ip=$(crn_ip "$idx")
-    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -i "$SSH_KEY_FILE" "$@" "root@$ip:/tmp/"
+    retry_255 scp "${SSH_OPTS[@]}" -i "$SSH_KEY_FILE" "$@" "root@$ip:/tmp/"
 }
 
 # ---------------------------------------------------------------------------
@@ -322,7 +333,7 @@ EOF
 
         # Copy config
         ssh_crn "$idx" "mkdir -p /etc/aleph-vm"
-        scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        retry_255 scp "${SSH_OPTS[@]}" \
             -i "$SSH_KEY_FILE" "$env_file" "root@$ip:/etc/aleph-vm/supervisor.env"
 
         # Wait for apt lock
@@ -345,7 +356,7 @@ EOF
         # Download/upload and install .deb
         if [ -n "$local_deb" ]; then
             echo "    Uploading aleph-vm .deb..."
-            scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            retry_255 scp "${SSH_OPTS[@]}" \
                 -i "$SSH_KEY_FILE" "$local_deb" "root@$ip:/opt/aleph-vm.deb"
         else
             echo "    Downloading aleph-vm ${version}..."

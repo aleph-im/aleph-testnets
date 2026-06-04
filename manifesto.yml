@@ -6,7 +6,7 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    tag: "0.10.2-rc1"
+    tag: "0.10.2-rc5"
 
   p2p-service:
     image: alephim/p2p-service
@@ -14,7 +14,7 @@ components:
 
   aleph-cli:
     version: "0.11.0"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.10.3/aleph-cli-linux-x86_64"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.11.0/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer
@@ -26,11 +26,11 @@ components:
 
   scheduler-rs:
     image: odesenfans/scheduler-rs
-    tag: "0.1.0-rc3"
+    tag: "0.1.0"
 
   scheduler-api:
     image: odesenfans/scheduler-api
-    tag: "0.1.0-rc3"
+    tag: "0.1.0"
 
   aleph-vm:
     version: "1.12.0"

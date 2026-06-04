@@ -13,7 +13,7 @@ components:
     tag: "0.1.5"
 
   aleph-cli:
-    version: "0.10.3"
+    version: "0.11.0"
     url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.10.3/aleph-cli-linux-x86_64"
 
   indexer:

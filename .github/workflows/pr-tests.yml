@@ -183,7 +183,9 @@ jobs:
         # Contract deployment uses the Docker container, but tests invoke cast directly.
         run: |
           ssh root@${DROPLET_IPV4} "curl -L https://foundry.paradigm.xyz | bash"
-          ssh root@${DROPLET_IPV4} "/root/.foundry/bin/foundryup"
+          # foundryup hits api.github.com, which intermittently times out from
+          # the droplet — retry a few times before giving up.
+          ssh root@${DROPLET_IPV4} "for i in 1 2 3; do /root/.foundry/bin/foundryup && exit 0; echo \"foundryup failed (attempt \$i/3), retrying in 15s...\"; sleep 15; done; exit 1"
           # Symlink to /usr/local/bin so cast/forge are on PATH for non-interactive SSH
           ssh root@${DROPLET_IPV4} "ln -sf /root/.foundry/bin/cast /usr/local/bin/cast"
           ssh root@${DROPLET_IPV4} "ln -sf /root/.foundry/bin/forge /usr/local/bin/forge"

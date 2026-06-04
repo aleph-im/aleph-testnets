@@ -66,6 +66,10 @@ def test_instance_backup_restore(backup_vm, aleph_cli, ssh_key_pair, tmp_path):
     assert archive.exists() and archive.stat().st_size > 0, "Backup archive should be non-empty"
 
     # Mutate the sentinel after the backup, then restore from the archive.
+    # The CRN just churned ~2GB of disk I/O (qcow2 backup + tar + download),
+    # which can leave the guest unresponsive for a while — poll until SSH
+    # answers again instead of giving it a single 15s attempt.
+    wait_for_ssh(private_key_path, backup_vm.crn_host, backup_vm.ssh_port, timeout=180)
     modified = uuid.uuid4().hex
     ssh_run(
         private_key_path, backup_vm.crn_host, backup_vm.ssh_port,

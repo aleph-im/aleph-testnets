@@ -9,6 +9,7 @@ import pytest
 from tests.vm_helpers import (
     create_dispatched_instance,
     delete_instance,
+    poll,
     resolve_crn_address,
     ssh_run,
     wait_for_ssh,
@@ -66,15 +67,21 @@ def test_instance_backup_restore(backup_vm, aleph_cli, ssh_key_pair, tmp_path):
     assert archive.exists() and archive.stat().st_size > 0, "Backup archive should be non-empty"
 
     # Mutate the sentinel after the backup, then restore from the archive.
-    # The CRN just churned ~2GB of disk I/O (qcow2 backup + tar + download),
-    # which can leave the guest unresponsive for a while — poll until SSH
-    # answers again instead of giving it a single 15s attempt.
-    wait_for_ssh(private_key_path, backup_vm.crn_host, backup_vm.ssh_port, timeout=180)
+    # After `backup create` (qemu-img convert -U on the live disk) the guest
+    # answers SSH exec (page-cache only) but disk writes/sync stall for a
+    # while. Poll the *write itself* with a hard deadline: if it never lands,
+    # that's an aleph-vm bug (guest I/O stuck after backup), not flakiness.
     modified = uuid.uuid4().hex
-    ssh_run(
-        private_key_path, backup_vm.crn_host, backup_vm.ssh_port,
-        f"echo {modified} > /root/sentinel.txt && sync",
-    )
+
+    def _write_sentinel():
+        ssh_run(
+            private_key_path, backup_vm.crn_host, backup_vm.ssh_port,
+            f"echo {modified} > /root/sentinel.txt && sync",
+            timeout=60,
+        )
+        return True
+
+    poll("sentinel write after backup", _write_sentinel, timeout=300, interval=5)
 
     aleph_cli("instance", "backup", "restore", "--file", str(archive),
               backup_vm.hash, "--chain", "eth")

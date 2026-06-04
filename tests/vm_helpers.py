@@ -141,8 +141,11 @@ def delete_instance(aleph_cli, vm_hash):
     Cleaning up is not optional hygiene here — leaked VMs occupy CRN capacity, and
     the migration test needs a free CRN to migrate onto. Every instance-creating
     test must call this so capacity can't creep up as the suite grows.
+
+    -y is required: without it the CLI prompts for confirmation, and on the CI's
+    non-TTY stdin that reads EOF and silently aborts the FORGET.
     """
-    aleph_cli("instance", "delete", vm_hash, "--chain", "eth", check=False)
+    aleph_cli("instance", "delete", vm_hash, "-y", "--chain", "eth", check=False)
 
 
 def create_dispatched_instance(aleph_cli, rootfs_hash, public_key_path, name, *,

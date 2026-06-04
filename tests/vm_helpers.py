@@ -30,8 +30,8 @@ def poll(description, fetch, timeout, interval=5):
     pytest.fail(f"{description} did not succeed within {timeout}s (last error: {last_err})")
 
 
-def resolve_crn_host(aleph_cli, crn_hash: str) -> str:
-    """Return the CRN's reachable hostname (from its corechannel-registered URL)."""
+def resolve_crn_address(aleph_cli, crn_hash: str) -> str:
+    """Return the CRN's corechannel-registered API URL (e.g. http://1.2.3.4:4020)."""
     nodes = aleph_cli(
         "node", "list", "--type", "crn", "--all",
         "--corechannel-address", NODESTATUS_ADDR,
@@ -39,8 +39,13 @@ def resolve_crn_host(aleph_cli, crn_hash: str) -> str:
     )
     for n in nodes or []:
         if n.get("hash") == crn_hash:
-            return urlparse(n["address"]).hostname
+            return n["address"].rstrip("/")
     pytest.fail(f"CRN {crn_hash} not found in corechannel aggregate")
+
+
+def resolve_crn_host(aleph_cli, crn_hash: str) -> str:
+    """Return the CRN's reachable hostname (from its corechannel-registered URL)."""
+    return urlparse(resolve_crn_address(aleph_cli, crn_hash)).hostname
 
 
 def _ssh_base(private_key_path, host, port):

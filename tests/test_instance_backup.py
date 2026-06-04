@@ -2,12 +2,14 @@
 sentinel file. Uses its own VM because restore rewrites the rootfs.
 """
 import uuid
+from urllib.parse import urlsplit
 
 import pytest
 
 from tests.vm_helpers import (
     create_dispatched_instance,
     delete_instance,
+    resolve_crn_address,
     ssh_run,
     wait_for_ssh,
 )
@@ -41,33 +43,26 @@ def test_instance_backup_restore(backup_vm, aleph_cli, ssh_key_pair, tmp_path):
     # Create the backup (blocks until complete).
     aleph_cli("instance", "backup", "create", backup_vm.hash, "--follow", "--chain", "eth")
 
-    # The backup metadata must be retrievable from the CRN — this path goes over
-    # the CRN control API and is the part we can always assert in CI.
+    # The backup metadata must be retrievable from the CRN control API.
     info = aleph_cli("instance", "backup", "info", backup_vm.hash, "--chain", "eth", parse_json=True)
     assert info, "backup info should return the created backup's metadata"
 
-    # Download the archive. The CRN returns a presigned download_url; in this
-    # split-host CI the runner cannot reach it (the URL targets a CRN-local
-    # endpoint that refuses the connection). Skip the download+restore leg on
-    # that specific reachability failure so it doesn't mask the create/info
-    # coverage above — but fail on any other error.
+    # Download the archive. aleph-vm signs download_url with a hardcoded
+    # https://<DOMAIN_NAME> origin (it assumes a TLS proxy on :443), which
+    # testnet CRNs don't run — so the URL as returned is unreachable here.
+    # The HMAC signature only covers backup_id:vm_hash:expires, NOT the
+    # origin, so rewrite the URL onto the CRN's registered API origin and
+    # hand it to the CLI, which accepts a presigned URL in place of a VM
+    # hash. Drop this rewrite once aleph-vm builds the URL from the origin
+    # the client actually used.
+    download_url = info.get("download_url")
+    assert download_url, f"backup info should include a download_url, got: {info}"
+    parts = urlsplit(download_url)
+    crn_api = resolve_crn_address(aleph_cli, backup_vm.crn_hash)
+    reachable_url = f"{crn_api}{parts.path}?{parts.query}"
+
     archive = tmp_path / "backup.tar"
-    dl = aleph_cli(
-        "instance", "backup", "download", backup_vm.hash, "-o", str(archive),
-        "--chain", "eth", check=False,
-    )
-    if dl.returncode != 0:
-        unreachable = any(
-            s in (dl.stderr or "")
-            for s in ("Connection refused", "Connection reset", "error sending request",
-                      "timed out", "No route to host")
-        )
-        if unreachable:
-            pytest.skip(
-                "backup download_url not reachable from the CI runner "
-                f"(CRN-local presigned endpoint): {dl.stderr.strip()}"
-            )
-        pytest.fail(f"backup download failed unexpectedly: {dl.stderr.strip()}")
+    aleph_cli("instance", "backup", "download", reachable_url, "-o", str(archive), "--chain", "eth")
     assert archive.exists() and archive.stat().st_size > 0, "Backup archive should be non-empty"
 
     # Mutate the sentinel after the backup, then restore from the archive.

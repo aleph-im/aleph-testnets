@@ -76,7 +76,8 @@ Three new optional state files in `.local/crn/<idx>/`:
   `ALEPH_VM_SEV_CTL_PATH=/opt/sevctl` (the aleph-vm default path).
 - **`ssh-user`** — SSH user for this CRN (defaults to `root`).
   `ssh_crn`/`scp_to_crn` read it; when non-root, remote commands run through
-  `sudo -n`.
+  `sudo -n`. This plugs into the `SSH_OPTS` (ControlMaster) + `retry_255`
+  helpers introduced by PR #20 rather than raw ssh/scp invocations.
 
 `--register` needs no changes: the TEE server registers like any CRN against
 the per-run CCN, and the registration dies with the CCN droplet, so there is
@@ -153,28 +154,39 @@ hit the cache.
 
 ## Test design (`tests/test_confidential.py`)
 
-New session fixtures in `conftest.py`, mirroring `rootfs_image`:
+The test builds on `tests/vm_helpers.py` (added by PR #20): `poll`,
+`resolve_crn_host`, `wait_for_dispatched`, `wait_for_ssh`/`ssh_run`, and
+`delete_instance` (which already encodes the `-y` non-TTY gotcha).
+`wait_for_dispatched` gains a `required_port=None` mode: for confidential VMs
+the scheduler places the instance *before* it starts, so port 22 only maps
+after secret injection.
+
+New session fixtures in `conftest.py`, mirroring `rootfs_image` and the
+session-scoped `rootfs_hash` upload fixture:
 
 - `confidential_rootfs` — path from `ALEPH_TESTNET_CONFIDENTIAL_ROOTFS`;
   skip when unset (keeps local runs working).
+- `confidential_rootfs_hash` — uploads it once per session → item hash.
 - `confidential_firmware` — path from `ALEPH_TESTNET_CONFIDENTIAL_FIRMWARE`;
   skip when unset.
+- `confidential_firmware_hash` — uploads it once per session → item hash.
 - Password from `ALEPH_TESTNET_CONFIDENTIAL_PASSWORD` (shared default).
 
 `test_confidential_instance_create_and_ssh` (timeout ~600 s, mirrors
 `test_instance_create_and_ssh`):
 
-1. **Upload**: `aleph file upload <img> --storage-engine storage --chain eth`
-   → rootfs `item_hash`; same for the OVMF blob → firmware `item_hash`.
+1. **Upload**: via the `confidential_rootfs_hash` / `confidential_firmware_hash`
+   session fixtures (`aleph file upload <img> --storage-engine storage
+   --chain eth`).
 2. **Create**: `aleph instance create test-confidential --image <hash>
    --confidential --confidential-firmware <firmware-hash> --vcpus 1
    --memory 4GiB --disk-size 4GiB --ssh-pubkey-file <pub> --chain eth`.
    `--confidential-firmware` must be an explicit hash: the CLI's default
    resolves `defaults.firmware` from the `vm-images` aggregate, which does
    not exist on a fresh testnet CCN.
-3. **Wait for scheduler**: poll `aleph instance show <hash> --verbose` until
-   `placement.allocated_node` is set; resolve the CRN host via the
-   corechannel aggregate (reuse `_resolve_crn_host`) and assert it equals
+3. **Wait for scheduler**: `wait_for_dispatched(..., required_port=None)`
+   until `placement.allocated_node` is set; resolve the CRN host via the
+   corechannel aggregate (`resolve_crn_host`) and assert it equals
    `ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST` (the TEE server).
 4. **Init session**: `aleph instance confidential init-session <hash>
    --keep-session` (non-interactive; `--keep-session` makes reruns idempotent
@@ -194,9 +206,27 @@ New session fixtures in `conftest.py`, mirroring `rootfs_image`:
      (kernel confirms memory-encrypted execution);
    - the root filesystem sits on a dm-crypt device (`lsblk` shows a `crypt`
      ancestor of `/`) — proves the encrypted-rootfs path engaged.
-8. **Teardown** (fixture finalizer, runs even on failure):
-   `aleph instance delete <hash> -y` — `-y` is mandatory; without it the CLI
-   silently aborts on non-TTY.
+8. **Teardown** (try/finally, runs even on failure): `delete_instance` from
+   `vm_helpers` (best-effort FORGET; encodes the mandatory `-y` — without it
+   the CLI silently aborts on non-TTY).
+
+### Interaction with the migration test (PR #20)
+
+`test_migration` creates a regular instance and **unlinks whatever CRN the
+scheduler placed it on** — which can be the TEE server, since it also accepts
+regular instances — and never re-links it. A confidential test running after
+that would time out waiting for placement. Mitigations:
+
+- `test_migration` re-links the unlinked CRN in its `finally` block (leave the
+  corechannel as you found it).
+- The confidential test asserts the TEE CRN is present in the corechannel
+  aggregate *before* creating the instance, failing fast with a clear message
+  instead of a 300 s placement timeout.
+- Note: CI runs pytest serially and `test_confidential.py` happens to sort
+  before `test_migration.py`, but the mitigations above are what we rely on —
+  not alphabetical ordering. The Justfile's optional xdist mode
+  (`-n auto --dist loadscope`) runs modules concurrently, where ordering
+  guarantees nothing.
 
 ## Error handling
 

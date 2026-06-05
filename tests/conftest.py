@@ -263,6 +263,69 @@ def rootfs_hash(aleph_cli, rootfs_image) -> str:
 
 
 @pytest.fixture(scope="session")
+def confidential_rootfs() -> str:
+    path = os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_ROOTFS", "")
+    if not path or not os.path.exists(path):
+        pytest.skip("No confidential rootfs — requires ALEPH_TESTNET_CONFIDENTIAL_ROOTFS")
+    return path
+
+
+@pytest.fixture(scope="session")
+def confidential_firmware() -> str:
+    path = os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_FIRMWARE", "")
+    if not path or not os.path.exists(path):
+        pytest.skip("No confidential firmware — requires ALEPH_TESTNET_CONFIDENTIAL_FIRMWARE")
+    return path
+
+
+@pytest.fixture(scope="session")
+def confidential_crn_host() -> str:
+    """Address of the static TEE server (the only confidential-capable CRN)."""
+    host = os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST", "")
+    if not host:
+        pytest.skip("No TEE server — requires ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST")
+    return host
+
+
+@pytest.fixture(scope="session")
+def confidential_password() -> str:
+    """Disk-decryption password baked into the encrypted rootfs by
+    scripts/confidential-artifacts.sh. A fixed, non-secret test value —
+    the default must match that script's."""
+    return os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_PASSWORD", "test-password")
+
+
+@pytest.fixture(scope="session")
+def confidential_rootfs_hash(aleph_cli, confidential_rootfs) -> str:
+    """Upload the encrypted rootfs once per session; return its item_hash."""
+    result = aleph_cli(
+        "file", "upload", confidential_rootfs,
+        "--storage-engine", "storage", "--chain", "eth",
+        parse_json=True,
+    )
+    item_hash = result["item_hash"]
+    assert item_hash, "Confidential rootfs upload should return an item_hash"
+    return item_hash
+
+
+@pytest.fixture(scope="session")
+def confidential_firmware_hash(aleph_cli, confidential_firmware) -> str:
+    """Upload the OVMF blob once per session; return its item_hash.
+
+    Must be referenced explicitly at create time: the CLI's default firmware
+    resolution reads the `vm-images` aggregate, which does not exist on a
+    fresh testnet CCN, and the CRN downloads the firmware by this hash."""
+    result = aleph_cli(
+        "file", "upload", confidential_firmware,
+        "--storage-engine", "storage", "--chain", "eth",
+        parse_json=True,
+    )
+    item_hash = result["item_hash"]
+    assert item_hash, "Firmware upload should return an item_hash"
+    return item_hash
+
+
+@pytest.fixture(scope="session")
 def ssh_key_pair(tmp_path_factory):
     """Generate an ephemeral Ed25519 SSH key pair for instance tests."""
     key_dir = tmp_path_factory.mktemp("ssh")

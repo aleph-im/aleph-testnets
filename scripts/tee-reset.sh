@@ -26,7 +26,10 @@ remote() {
 
 echo "==> Resetting aleph-vm state on $HOST ..."
 remote "systemctl stop aleph-vm-supervisor.service 2>/dev/null || true"
-remote "pkill -9 -f qemu-system-x86 || true"
+# The [6] bracket keeps the pattern from matching the remote shell's own
+# cmdline (which contains the pattern string) — without it, pkill -f kills
+# its parent shell and the ssh command exits 137 instead of 0.
+remote "pkill -9 -f 'qemu-system-x8[6]' || true"
 # Execution state (VM disks, sessions, sqlite DB) and download caches.
 # /opt/aleph-ci-cache (encrypted-rootfs build cache) is intentionally kept —
 # it is meant to survive across runs.

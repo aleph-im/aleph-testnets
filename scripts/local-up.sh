@@ -215,7 +215,7 @@ dump_logs() {
     echo "==> Dumping container logs..."
     for svc in $(docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus --profile scheduler config --services 2>/dev/null); do
         echo "===== $svc ====="
-        docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus --profile scheduler logs --no-color --tail=200 "$svc" 2>/dev/null || true
+        docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus --profile scheduler logs --no-color --tail=2000 "$svc" 2>/dev/null || true
     done
 }
 

@@ -36,14 +36,15 @@ TEE_USER="${TEE_USER:-root}"
 SSH_KEY_FILE="${SSH_KEY_FILE:-$HOME/.ssh/id_ed25519}"
 DISK_PASSWORD="${ALEPH_TESTNET_CONFIDENTIAL_PASSWORD:-test-password}"
 
-# Canonical confidential OVMF blob on aleph.cloud. ITEM_HASH is the aleph
-# storage item hash (used to download); SHA256 is the digest of the blob
-# itself (what the SEV launch measurement is derived from). The SHA256 check
-# below is a download-integrity guard only — the measurement anchor the test
-# actually trusts is the local blob passed via `--firmware-file`.
-FIRMWARE_ITEM_HASH="ba5bb13f3abca960b101a759be162b229e2b7e93ecad9d1307e54de887f177ff"
+# Canonical confidential OVMF blob on aleph.cloud, addressed by its storage
+# file hash — which for the storage engine is the sha256 of the blob itself,
+# so the same constant doubles as the download-integrity check. (The STORE
+# message wrapping the file is ba5bb13f3abca960b101a759be162b229e2b7e93ecad9
+# d1307e54de887f177ff and returns 404 on the raw endpoint — don't use it.)
+# The measurement anchor the test actually trusts is the local blob passed
+# via `--firmware-file`.
 FIRMWARE_SHA256="89b76b0e64fe9015084fbffdf8ac98185bafc688bfe7a0b398585c392d03c7ee"
-FIRMWARE_URL="https://api2.aleph.im/api/v0/storage/raw/${FIRMWARE_ITEM_HASH}"
+FIRMWARE_URL="https://api2.aleph.im/api/v0/storage/raw/${FIRMWARE_SHA256}"
 
 BASE_IMAGE_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
 # Must hold the extracted Debian rootfs (~1.2 GB) + boot partition + LUKS

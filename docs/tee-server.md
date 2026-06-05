@@ -13,7 +13,10 @@ authenticates with the same SSH key as the DigitalOcean droplets
 - **BIOS/firmware**: AMD SEV and SEV-ES enabled, with sufficient SEV ASIDs.
 - **Kernel**: KVM AMD SEV active — `cat /sys/module/kvm_amd/parameters/sev`
   must print `Y` (and `sev_es` likewise for SEV-ES).
-- **OS packages** (Debian 12 assumed):
+- **OS**: any distro with a published aleph-vm `.deb` (debian-12, debian-13,
+  ubuntu-22.04, ubuntu-24.04) — `crn-up.sh` detects the distro via
+  `/etc/os-release` and installs the matching variant.
+- **OS packages** (apt names; adjust to taste):
   `apt install docker.io apparmor-profiles sudo guestmount parted cryptsetup`
   - `docker.io`, `apparmor-profiles`: standard CRN dependencies.
   - `sudo`: required even for root logins — the vendored image build script

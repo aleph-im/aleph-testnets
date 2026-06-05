@@ -280,9 +280,13 @@ jobs:
 
       - name: Prepare confidential VM artifacts
         run: |
+          # SEVCTL_HOST = CRN 0 (debian-12): its sevctl is built against the
+          # oldest glibc and is guaranteed to run on the (ubuntu-24.04) CCN,
+          # unlike the TEE server's, whose distro may be newer.
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
             TEE_HOST='${{ secrets.AMD_SEV_SNP_HOST }}' \
             TEE_USER='${{ secrets.AMD_SEV_SNP_USER }}' \
+            SEVCTL_HOST='${CRN_0_IPV4}' \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             bash scripts/confidential-artifacts.sh"
 

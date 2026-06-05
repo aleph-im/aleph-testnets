@@ -302,11 +302,14 @@ install_crn() {
     local token_hash
     token_hash=$(echo -n "$ALLOCATION_TOKEN" | sha256sum | cut -d' ' -f1)
 
-    # Determine .deb source: branch (CI artifact) or version (GitHub release)
+    # Determine .deb source: branch (CI artifact) or version (GitHub release).
+    # NB: branch CI artifacts only exist for debian-12; releases ship one .deb
+    # per distro (debian-12/13, ubuntu-22.04/24.04), picked per CRN below —
+    # the bundled Python native extensions only import on the matching distro.
     local branch
     branch=$(read_vm_branch)
     local local_deb=""
-    local deb_url=""
+    local version=""
 
     if [ -n "$branch" ]; then
         local_deb="$LOCAL_DIR/aleph-vm.debian-12.deb"
@@ -315,11 +318,8 @@ install_crn() {
         echo "    vm-connector: $connector_image"
         echo "    CCN: $CCN_URL"
     else
-        local version
         version=$(read_vm_version)
-        deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.debian-12.deb"
         echo "==> aleph-vm version: $version"
-        echo "    .deb URL: $deb_url"
         echo "    vm-connector: $connector_image"
         echo "    CCN: $CCN_URL"
     fi
@@ -410,7 +410,13 @@ EOF
             scp_to_crn "$idx" "$local_deb"
             ssh_crn "$idx" "mv /tmp/$(basename "$local_deb") /opt/aleph-vm.deb"
         else
-            echo "    Downloading aleph-vm ${version}..."
+            # Pick the release .deb matching this CRN's distro (e.g. a static
+            # TEE server may not run debian-12 like the DO droplets do).
+            local deb_variant
+            deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
+            deb_variant="${deb_variant:-debian-12}"
+            local deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.${deb_variant}.deb"
+            echo "    Downloading aleph-vm ${version} (${deb_variant})..."
             ssh_crn "$idx" "wget -q -O /opt/aleph-vm.deb '$deb_url'"
         fi
         echo "    Installing .deb..."

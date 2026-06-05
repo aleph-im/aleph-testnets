@@ -19,6 +19,13 @@
 #   TEE_HOST       Address of the TEE server (required)
 #   TEE_USER       SSH user on the TEE server (default: root; non-root needs
 #                  passwordless sudo)
+#   SEVCTL_HOST    Host to copy /opt/sevctl from (default: TEE_HOST). Prefer a
+#                  debian-12 CRN: its sevctl is built against the oldest glibc
+#                  and therefore runs on this (newer) machine, whereas the TEE
+#                  server's distro — and its .deb's glibc baseline — may be
+#                  newer than ours.
+#   SEVCTL_USER    SSH user on SEVCTL_HOST (default: TEE_USER if SEVCTL_HOST
+#                  is the TEE server, else root)
 #   SSH_KEY_FILE   SSH private key (default: ~/.ssh/id_ed25519)
 #   ALEPH_TESTNET_CONFIDENTIAL_PASSWORD
 #                  Disk password baked into the image (default: test-password —
@@ -33,6 +40,12 @@ IMAGE_DIR="$REPO_ROOT/scripts/confidential-image"
 
 TEE_HOST="${TEE_HOST:?TEE_HOST must be set}"
 TEE_USER="${TEE_USER:-root}"
+SEVCTL_HOST="${SEVCTL_HOST:-$TEE_HOST}"
+if [ "$SEVCTL_HOST" = "$TEE_HOST" ]; then
+    SEVCTL_USER="${SEVCTL_USER:-$TEE_USER}"
+else
+    SEVCTL_USER="${SEVCTL_USER:-root}"
+fi
 SSH_KEY_FILE="${SSH_KEY_FILE:-$HOME/.ssh/id_ed25519}"
 DISK_PASSWORD="${ALEPH_TESTNET_CONFIDENTIAL_PASSWORD:-test-password}"
 
@@ -67,12 +80,25 @@ mkdir -p "$OUT_DIR" "$BIN_DIR"
 
 # --- 1. sevctl ---------------------------------------------------------------
 # Stage through /tmp with sudo: /opt/sevctl is normally world-readable, but a
-# non-root $TEE_USER must not depend on that.
-echo "==> Fetching sevctl from the TEE server..."
-tee_ssh "cp /opt/sevctl /tmp/sevctl && chmod 644 /tmp/sevctl"
-scp "${SSH_OPTS[@]}" "$TEE_USER@$TEE_HOST:/tmp/sevctl" "$BIN_DIR/sevctl"
-tee_ssh "rm -f /tmp/sevctl"
+# non-root user must not depend on that.
+sevctl_ssh() {
+    local cmd="$1"
+    if [ "$SEVCTL_USER" = "root" ]; then
+        ssh "${SSH_OPTS[@]}" "root@$SEVCTL_HOST" "$cmd"
+    else
+        ssh "${SSH_OPTS[@]}" "$SEVCTL_USER@$SEVCTL_HOST" "sudo -n bash -c $(printf '%q' "$cmd")"
+    fi
+}
+
+echo "==> Fetching sevctl from $SEVCTL_HOST..."
+sevctl_ssh "cp /opt/sevctl /tmp/sevctl && chmod 644 /tmp/sevctl"
+scp "${SSH_OPTS[@]}" "$SEVCTL_USER@$SEVCTL_HOST:/tmp/sevctl" "$BIN_DIR/sevctl"
+sevctl_ssh "rm -f /tmp/sevctl"
 chmod +x "$BIN_DIR/sevctl"
+# Fail here, not at init-session time, if the binary doesn't run on this host
+# (e.g. built against a newer glibc than ours). -V matches aleph-vm's own
+# packaging smoke test.
+"$BIN_DIR/sevctl" -V >/dev/null
 
 # --- 2. OVMF firmware --------------------------------------------------------
 firmware="$OUT_DIR/OVMF.fd"

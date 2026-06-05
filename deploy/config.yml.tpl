@@ -27,8 +27,12 @@ storage:
   store_files: true
   engine: filesystem
   folder: /var/lib/pyaleph
-  max_file_size: 1073741824
-  max_unauthenticated_upload_file_size: 1073741824
+  # 4 GiB: the confidential VM test uploads a ~3 GB encrypted rootfs image.
+  # max_upload_file_size is the authenticated-multipart limit the CLI's
+  # `file upload` hits (pyaleph default: 1 GiB).
+  max_file_size: 4294967296
+  max_unauthenticated_upload_file_size: 4294967296
+  max_upload_file_size: 4294967296
 
 ipfs:
   alive_topic: ALEPH_TESTNET_ALIVE

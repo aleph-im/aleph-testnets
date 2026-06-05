@@ -39,7 +39,10 @@ start-dev-env: setup-submodules setup-env
     ./scripts/local-up.sh --up
     ./scripts/local-up.sh --deploy-contracts
 
-# Run integration tests (extra args passed through, e.g. just test -k test_credit)
+# Run integration tests (extra args passed through, e.g. just test -k test_credit).
+# For parallel runs across test modules: just test -n auto --dist loadscope
+# (loadscope keeps a module's tests on one worker so each module's shared VM is
+# created once; different modules run concurrently — a larger CRN hosts many VMs).
 test *args='': setup-env
     #!/usr/bin/env bash
     set -euo pipefail

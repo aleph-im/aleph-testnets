@@ -14,7 +14,7 @@
 #   SSH_KEY_FILE        Path to SSH private key for droplet access (optional, defaults to ~/.ssh/id_ed25519)
 #   DO_SSH_KEY_FINGERPRINT  SSH key fingerprint registered with DigitalOcean (required for --provision)
 #   DO_REGION           DigitalOcean region (default: ams3)
-#   DO_SIZE             Droplet size (default: s-4vcpu-8gb)
+#   DO_SIZE             Droplet size (default: s-8vcpu-16gb)
 #   CRN_COUNT           Number of CRNs to provision (default: 1)
 #   ALEPH_VM_VERSION    Override aleph-vm version from manifesto
 #   ALEPH_VM_BRANCH     Deploy from a Git branch instead of a release (uses CI artifacts via gh CLI)
@@ -30,7 +30,7 @@ BIN_DIR="$REPO_ROOT/bin"
 # Defaults
 SSH_KEY_FILE="${SSH_KEY_FILE:-$HOME/.ssh/id_ed25519}"
 DO_REGION="${DO_REGION:-ams3}"
-DO_SIZE="${DO_SIZE:-s-4vcpu-8gb}"
+DO_SIZE="${DO_SIZE:-s-8vcpu-16gb}"
 CRN_COUNT="${CRN_COUNT:-1}"
 ALLOCATION_TOKEN="${ALLOCATION_TOKEN:-allocate-on-testnet}"
 
@@ -152,20 +152,43 @@ crn_name() {
     cat "$(crn_dir "$idx")/droplet-name"
 }
 
+# Fresh droplets intermittently reset SSH connections mid-handshake
+# (kex_exchange_identification: Connection reset by peer), especially under
+# the rapid bursts of short-lived connections this script makes. Mitigate
+# on two fronts:
+#  - ControlMaster multiplexing: one TCP connection per CRN, reused by all
+#    ssh/scp calls, so only the first connection is exposed to the flake.
+#  - retry_255: retry connection-level failures (ssh/scp exit code 255).
+#    The remote commands used here are idempotent, so re-running is safe.
+SSH_OPTS=(
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    -o ControlMaster=auto -o ControlPath=/tmp/ssh-cm-crn-%r@%h-%p -o ControlPersist=600
+)
+
+retry_255() {
+    local attempt rc
+    for attempt in 1 2 3 4 5; do
+        "$@" && return 0
+        rc=$?
+        [ "$rc" -ne 255 ] && return "$rc"
+        echo "    SSH connection failed (attempt $attempt/5), retrying in 5s ..." >&2
+        sleep 5
+    done
+    return 255
+}
+
 ssh_crn() {
     local idx="$1"; shift
     local ip
     ip=$(crn_ip "$idx")
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -i "$SSH_KEY_FILE" "root@$ip" "$@"
+    retry_255 ssh "${SSH_OPTS[@]}" -i "$SSH_KEY_FILE" "root@$ip" "$@"
 }
 
 scp_to_crn() {
     local idx="$1"; shift
     local ip
     ip=$(crn_ip "$idx")
-    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -i "$SSH_KEY_FILE" "$@" "root@$ip:/tmp/"
+    retry_255 scp "${SSH_OPTS[@]}" -i "$SSH_KEY_FILE" "$@" "root@$ip:/tmp/"
 }
 
 # ---------------------------------------------------------------------------
@@ -310,7 +333,7 @@ EOF
 
         # Copy config
         ssh_crn "$idx" "mkdir -p /etc/aleph-vm"
-        scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        retry_255 scp "${SSH_OPTS[@]}" \
             -i "$SSH_KEY_FILE" "$env_file" "root@$ip:/etc/aleph-vm/supervisor.env"
 
         # Wait for apt lock
@@ -318,9 +341,11 @@ EOF
 
         # System update + dependencies
         echo "    Installing system packages..."
-        ssh_crn "$idx" "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
-        ssh_crn "$idx" "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
-        ssh_crn "$idx" "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
+        # NEEDRESTART_SUSPEND stops needrestart from bouncing sshd after the
+        # upgrade, which would reset the next SSH connection mid-handshake.
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
 
         # Start vm-connector
         echo "    Starting vm-connector..."
@@ -331,14 +356,14 @@ EOF
         # Download/upload and install .deb
         if [ -n "$local_deb" ]; then
             echo "    Uploading aleph-vm .deb..."
-            scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            retry_255 scp "${SSH_OPTS[@]}" \
                 -i "$SSH_KEY_FILE" "$local_deb" "root@$ip:/opt/aleph-vm.deb"
         else
             echo "    Downloading aleph-vm ${version}..."
             ssh_crn "$idx" "wget -q -O /opt/aleph-vm.deb '$deb_url'"
         fi
         echo "    Installing .deb..."
-        ssh_crn "$idx" "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install -y /opt/aleph-vm.deb"
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install -y /opt/aleph-vm.deb"
 
         # Wait for supervisor to be active
         echo "    Waiting for CRN supervisor..."

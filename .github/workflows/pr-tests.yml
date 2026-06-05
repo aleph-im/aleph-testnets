@@ -41,11 +41,19 @@ jobs:
           # Keepalives: long-running test commands (notably the migration test)
           # have multi-minute polling phases with no stdout, which lets the
           # CI→droplet SSH session idle out as a "Broken pipe".
+          # ControlMaster: the workflow opens dozens of short-lived SSH
+          # connections in rapid bursts, and fresh droplets intermittently
+          # reset some of them mid-handshake (kex_exchange_identification
+          # flakes). Multiplexing reuses one TCP connection per host, so
+          # only the first connection is exposed to that window.
           cat > ~/.ssh/config <<'EOF'
           Host *
               ServerAliveInterval 30
               ServerAliveCountMax 20
               TCPKeepAlive yes
+              ControlMaster auto
+              ControlPath ~/.ssh/cm-%r@%h-%p
+              ControlPersist 10m
           EOF
           chmod 0600 ~/.ssh/config
 
@@ -73,7 +81,7 @@ jobs:
 
             doctl compute droplet create \
               --image debian-12-x64 \
-              --size s-4vcpu-8gb \
+              --size s-8vcpu-16gb \
               --region ams3 \
               --ssh-keys ${{ vars.DO_SSH_KEY_FINGERPRINT }} \
               --tag-name testnets-crn \
@@ -128,15 +136,23 @@ jobs:
           # CCN: wait for cloud-init, install docker + foundry + pip + gh
           # (gh is needed when manifesto.yml deploys aleph-vm from a branch, so
           #  crn-up.sh can download the .deb artifact from aleph-im/aleph-vm CI.)
+          # NEEDRESTART_SUSPEND stops needrestart from bouncing sshd after
+          # apt upgrades libc/openssh, which resets in-flight and immediately
+          # following SSH connections (kex_exchange_identification flakes).
+          # Disabling the apt timers prevents the same restart from happening
+          # at a random later point mid-run via unattended-upgrades.
           (
             ssh root@${DROPLET_IPV4} "cloud-init status --wait || true"
+            ssh root@${DROPLET_IPV4} "systemctl disable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service 2>/dev/null || true"
             ssh root@${DROPLET_IPV4} "while fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 2; done"
             ssh root@${DROPLET_IPV4} "mkdir -p -m 755 /etc/apt/keyrings && \
               curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null && \
               chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
               echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' > /etc/apt/sources.list.d/github-cli.list"
-            ssh root@${DROPLET_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
-            ssh root@${DROPLET_IPV4} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io docker-compose-v2 python3-pip jq curl gh"
+            ssh root@${DROPLET_IPV4} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
+            ssh root@${DROPLET_IPV4} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io docker-compose-v2 python3-pip jq curl gh"
+            # Let sshd settle in case apt restarted it anyway.
+            for i in $(seq 1 20); do ssh root@${DROPLET_IPV4} true 2>/dev/null && break; sleep 3; done
           ) &
           CCN_PID=$!
 
@@ -149,10 +165,13 @@ jobs:
             ip="${!ip_var}"
             (
               ssh root@${ip} "cloud-init status --wait || true"
+              ssh root@${ip} "systemctl disable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service 2>/dev/null || true"
               ssh root@${ip} "while fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 2; done"
-              ssh root@${ip} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
-              ssh root@${ip} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
-              ssh root@${ip} "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
+              ssh root@${ip} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
+              ssh root@${ip} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
+              ssh root@${ip} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
+              # Let sshd settle in case apt restarted it anyway.
+              for i in $(seq 1 20); do ssh root@${ip} true 2>/dev/null && break; sleep 3; done
             ) &
             CRN_PIDS+=($!)
           done
@@ -164,7 +183,9 @@ jobs:
         # Contract deployment uses the Docker container, but tests invoke cast directly.
         run: |
           ssh root@${DROPLET_IPV4} "curl -L https://foundry.paradigm.xyz | bash"
-          ssh root@${DROPLET_IPV4} "/root/.foundry/bin/foundryup"
+          # foundryup hits api.github.com, which intermittently times out from
+          # the droplet — retry a few times before giving up.
+          ssh root@${DROPLET_IPV4} "for i in 1 2 3; do /root/.foundry/bin/foundryup && exit 0; echo \"foundryup failed (attempt \$i/3), retrying in 15s...\"; sleep 15; done; exit 1"
           # Symlink to /usr/local/bin so cast/forge are on PATH for non-interactive SSH
           ssh root@${DROPLET_IPV4} "ln -sf /root/.foundry/bin/cast /usr/local/bin/cast"
           ssh root@${DROPLET_IPV4} "ln -sf /root/.foundry/bin/forge /usr/local/bin/forge"

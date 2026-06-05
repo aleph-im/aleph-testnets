@@ -11,6 +11,9 @@ docs/tee-server.md) and the artifacts prepared by
 scripts/confidential-artifacts.sh. All `ALEPH_TESTNET_CONFIDENTIAL_*`
 fixtures skip when unset, so local runs without a TEE server still pass.
 """
+import json
+import urllib.request
+
 import pytest
 
 from tests.vm_helpers import (
@@ -47,6 +50,21 @@ def test_confidential_instance_create_and_ssh(
     assert any(confidential_crn_host in n.get("address", "") for n in nodes), (
         f"TEE CRN {confidential_crn_host} is not linked in the corechannel "
         "aggregate; confidential instances cannot be scheduled."
+    )
+
+    # Fail fast if the TEE CRN does not advertise confidential computing:
+    # the scheduler reads computing.ENABLE_CONFIDENTIAL_COMPUTING from this
+    # exact endpoint and will never place the instance without it.
+    config_url = f"http://{confidential_crn_host}:4020/status/config"
+    try:
+        crn_config = json.loads(urllib.request.urlopen(config_url, timeout=10).read())
+    except Exception as e:
+        pytest.fail(f"Cannot fetch TEE CRN config at {config_url}: {e}")
+    computing = crn_config.get("computing") or {}
+    assert computing.get("ENABLE_CONFIDENTIAL_COMPUTING") is True, (
+        f"TEE CRN does not advertise confidential computing "
+        f"(computing section: {computing!r}); check supervisor.env and that "
+        "the host supports SEV/SEV-ES."
     )
 
     result = aleph_cli(

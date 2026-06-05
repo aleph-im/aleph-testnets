@@ -321,10 +321,12 @@ jobs:
         run: |
           TEE_HOST="${{ secrets.AMD_SEV_SNP_HOST }}"
           TEE_USER="${{ secrets.AMD_SEV_SNP_USER }}"
+          # -n 5000 so the supervisor's startup settings dump
+          # (--print-settings) from this run's install is captured.
           if [ "$TEE_USER" = "root" ]; then
-            ssh "root@$TEE_HOST" "journalctl -u aleph-vm-supervisor.service --no-pager -n 500" > tee-supervisor.txt 2>&1 || true
+            ssh "root@$TEE_HOST" "journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
           else
-            ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u aleph-vm-supervisor.service --no-pager -n 500" > tee-supervisor.txt 2>&1 || true
+            ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
           fi
 
       - name: Upload artifacts

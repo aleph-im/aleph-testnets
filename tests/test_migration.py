@@ -67,4 +67,9 @@ def test_instance_migration(aleph_cli, rootfs_hash, ssh_key_pair, crn_nodes):
             f"but got {persisted!r}"
         )
     finally:
+        # Re-link the CRN this test unlinked: the corechannel aggregate is
+        # shared state, and the static TEE CRN in particular must stay linked
+        # for the confidential test. Best-effort, like delete_instance.
+        # (vm.crn_hash still holds the unlinked node — refresh() is not used.)
+        aleph_cli("node", "link", "--crn", vm.crn_hash, "--chain", "eth", check=False)
         delete_instance(aleph_cli, vm.hash)

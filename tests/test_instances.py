@@ -16,7 +16,8 @@ def test_instance_create_and_ssh(aleph_cli, rootfs_hash, ssh_key_pair):
         aleph_cli, rootfs_hash, public_key_path, "test-instance",
     )
     try:
-        output = wait_for_ssh(private_key_path, vm.crn_host, vm.ssh_port, timeout=60)
-        assert output, "SSH round-trip should succeed once the VM is up"
+        # Fails the test via poll() if the `echo hello` round-trip (checked
+        # inside ssh_ok) never succeeds — no separate assert needed.
+        wait_for_ssh(private_key_path, vm.crn_host, vm.ssh_port, timeout=60)
     finally:
         delete_instance(aleph_cli, vm.hash)

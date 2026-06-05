@@ -2,7 +2,6 @@
 one module-scoped VM; each test leaves it running). Ordered least → most
 disruptive: logs → port-forward → reboot → stop/start.
 """
-import json
 import urllib.request
 import uuid
 
@@ -49,9 +48,10 @@ def test_instance_logs(running_vm, aleph_cli):
 
 
 def _forward_present(forwards, port) -> bool:
-    """Tolerant check that `port` appears in `port-forward list` JSON, whose
-    exact shape may vary. Confirm/tighten against live output."""
-    return str(port) in json.dumps(forwards)
+    """True if `port-forward list` JSON has an entry for `port`. The CLI emits
+    a list of rows: {"item_hash", "port" (int), "external_port", "tcp", "udp"}
+    (render_list_json in aleph-cli's port_forward.rs)."""
+    return any(row.get("port") == port for row in forwards or [])
 
 
 def _wait_forward_host_port(aleph_cli, vm_hash, vm_port, timeout=120) -> int:
@@ -107,6 +107,10 @@ def test_instance_port_forward(running_vm, aleph_cli, ssh_key_pair):
         body = poll("HTTP through port forward", fetch_token, timeout=60)
         assert token in body, f"Expected token {token!r} through forward, got {body!r}"
     finally:
+        # Runs before the module fixture's delete_instance (pytest finalizes
+        # fixtures only after the test phase, and loadscope pins the module to
+        # one worker), so the VM still exists here. check=False because the
+        # forward may legitimately be gone already.
         aleph_cli("instance", "port-forward", "delete", running_vm.hash,
                   "--port", str(vm_port), "--chain", "eth", check=False)
         try:

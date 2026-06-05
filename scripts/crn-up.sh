@@ -420,7 +420,10 @@ EOF
             ssh_crn "$idx" "wget -q -O /opt/aleph-vm.deb '$deb_url'"
         fi
         echo "    Installing .deb..."
-        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install -y /opt/aleph-vm.deb"
+        # --reinstall: on a static CRN the same package version may already be
+        # installed (possibly from a different distro's .deb, which leaves the
+        # bundled Python packages broken) — plain `install` would skip it.
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install --reinstall -y /opt/aleph-vm.deb"
 
         # Wait for supervisor to be active
         echo "    Waiting for CRN supervisor..."

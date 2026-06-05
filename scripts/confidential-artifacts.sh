@@ -38,7 +38,9 @@ DISK_PASSWORD="${ALEPH_TESTNET_CONFIDENTIAL_PASSWORD:-test-password}"
 
 # Canonical confidential OVMF blob on aleph.cloud. ITEM_HASH is the aleph
 # storage item hash (used to download); SHA256 is the digest of the blob
-# itself (what the SEV launch measurement is derived from).
+# itself (what the SEV launch measurement is derived from). The SHA256 check
+# below is a download-integrity guard only — the measurement anchor the test
+# actually trusts is the local blob passed via `--firmware-file`.
 FIRMWARE_ITEM_HASH="ba5bb13f3abca960b101a759be162b229e2b7e93ecad9d1307e54de887f177ff"
 FIRMWARE_SHA256="89b76b0e64fe9015084fbffdf8ac98185bafc688bfe7a0b398585c392d03c7ee"
 FIRMWARE_URL="https://api2.aleph.im/api/v0/storage/raw/${FIRMWARE_ITEM_HASH}"
@@ -63,8 +65,12 @@ tee_ssh() {
 mkdir -p "$OUT_DIR" "$BIN_DIR"
 
 # --- 1. sevctl ---------------------------------------------------------------
+# Stage through /tmp with sudo: /opt/sevctl is normally world-readable, but a
+# non-root $TEE_USER must not depend on that.
 echo "==> Fetching sevctl from the TEE server..."
-scp "${SSH_OPTS[@]}" "$TEE_USER@$TEE_HOST:/opt/sevctl" "$BIN_DIR/sevctl"
+tee_ssh "cp /opt/sevctl /tmp/sevctl && chmod 644 /tmp/sevctl"
+scp "${SSH_OPTS[@]}" "$TEE_USER@$TEE_HOST:/tmp/sevctl" "$BIN_DIR/sevctl"
+tee_ssh "rm -f /tmp/sevctl"
 chmod +x "$BIN_DIR/sevctl"
 
 # --- 2. OVMF firmware --------------------------------------------------------

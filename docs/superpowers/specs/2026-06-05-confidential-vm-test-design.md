@@ -94,7 +94,7 @@ with upstream is a conscious, reviewable act; the trade-off is that they no
 longer auto-track the aleph-vm version under test — if upstream changes the
 image/OVMF contract, our copies need a manual sync.
 
-A new `scripts/confidential-rootfs.sh`, run from the CCN droplet, builds on
+A new `scripts/confidential-artifacts.sh`, run from the CCN droplet, builds on
 the TEE server over SSH (the server is static, has the disk, and the build
 needs `guestmount`/`parted`/`cryptsetup` + root):
 
@@ -112,7 +112,7 @@ needs `guestmount`/`parted`/`cryptsetup` + root):
 
 The password is a fixed, non-secret test constant — it protects nothing real.
 It is exposed as `ALEPH_TESTNET_CONFIDENTIAL_PASSWORD` (with the same default
-in `confidential-rootfs.sh` and `conftest.py`, so the image and the test
+in `confidential-artifacts.sh` and `conftest.py`, so the image and the test
 always agree).
 
 First run after a build-script change rebuilds (~5–10 min); subsequent runs
@@ -127,7 +127,7 @@ hit the cache.
 - New step **Configure TEE CRN state**: `ssh-keyscan` the TEE host, write
   `.local/crn/2/{droplet-ip,ssh-user,static,confidential}` on the CCN droplet
   from the `AMD_SEV_SNP_HOST`/`AMD_SEV_SNP_USER` secrets.
-- New step **Build/fetch encrypted rootfs**: runs `confidential-rootfs.sh`,
+- New step **Build/fetch encrypted rootfs**: runs `confidential-artifacts.sh`,
   ending with the image at a known path on the CCN droplet; exported to pytest
   as `ALEPH_TESTNET_CONFIDENTIAL_ROOTFS`.
 - **sevctl on the CCN droplet**: `confidential init-session` shells out to

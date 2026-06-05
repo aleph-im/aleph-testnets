@@ -35,10 +35,10 @@ components:
   aleph-vm:
     # EIP-191 allocation auth (aleph-vm#945) is not in any release yet
     # (latest: 1.12.0, 2026-04-30), so deploy from a branch until one ships.
-    # This branch additionally fixes the per-signer iat replay floor rejecting
-    # same-second requests to different endpoints, which broke migrations.
+    # This branch is main (incl. the cross-endpoint iat replay fix needed for
+    # migrations) plus confidential-VM allocation fixes under test.
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).
-    branch: "fix/iat-cross-endpoint-replay"
+    branch: "fix/confidential-allocation-loop"
     # To deploy from a release instead, replace `branch` with:
     #   version: "1.12.0"
 

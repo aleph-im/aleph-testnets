@@ -35,6 +35,7 @@ def test_confidential_instance_create_and_ssh(
     confidential_firmware,
     confidential_password,
     confidential_crn_host,
+    scheduler_api_url,
     ssh_key_pair,
 ):
     private_key_path, public_key_path = ssh_key_pair
@@ -65,6 +66,29 @@ def test_confidential_instance_create_and_ssh(
         f"TEE CRN does not advertise confidential computing "
         f"(computing section: {computing!r}); check supervisor.env and that "
         "the host supports SEV/SEV-ES."
+    )
+
+    # Wait until the *scheduler* has observed that capability. scheduler-rs
+    # only reschedules on VM deltas and node add/remove — a node capability
+    # appearing later does NOT trigger a reschedule — so a confidential VM
+    # created before the scheduler's first successful poll of the TEE node
+    # sits unscheduled until some unrelated VM delta fires. Creating the
+    # instance only after the capability is visible makes placement
+    # deterministic: the instance's own delta reschedules with the flag set.
+    def tee_confidential_in_scheduler():
+        url = f"{scheduler_api_url}/api/v1/nodes"
+        data = json.loads(urllib.request.urlopen(url, timeout=10).read())
+        nodes_list = data.get("nodes", data) if isinstance(data, dict) else data
+        for n in nodes_list or []:
+            if confidential_crn_host in (n.get("address") or ""):
+                return n if n.get("confidential_computing_enabled") else None
+        return None
+
+    poll(
+        "Scheduler sees TEE node as confidential-capable",
+        tee_confidential_in_scheduler,
+        timeout=300,
+        interval=10,
     )
 
     result = aleph_cli(

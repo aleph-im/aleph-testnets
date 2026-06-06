@@ -78,8 +78,9 @@ def test_confidential_instance_create_and_ssh(
     def tee_confidential_in_scheduler():
         url = f"{scheduler_api_url}/api/v1/nodes"
         data = json.loads(urllib.request.urlopen(url, timeout=10).read())
-        nodes_list = data.get("nodes", data) if isinstance(data, dict) else data
-        for n in nodes_list or []:
+        # Response shape: {"items": [...], "pagination": {...}}
+        nodes_list = data.get("items", []) if isinstance(data, dict) else (data or [])
+        for n in nodes_list:
             if confidential_crn_host in (n.get("address") or ""):
                 return n if n.get("confidential_computing_enabled") else None
         return None

@@ -138,7 +138,10 @@ def test_confidential_instance_create_and_ssh(
 
         # Init sequence: fetch + verify the platform cert against AMD roots,
         # derive session keys (sevctl), post them to the CRN.
-        aleph_cli("instance", "confidential", "init-session", vm_hash, "--keep-session")
+        aleph_cli(
+            "instance", "confidential", "init-session", vm_hash,
+            "--keep-session", "--chain", "eth",
+        )
 
         # Start: validate the launch measurement against the known firmware
         # and inject the disk-decryption secret. The standalone `start` does
@@ -149,6 +152,7 @@ def test_confidential_instance_create_and_ssh(
                 "instance", "confidential", "start", vm_hash,
                 "--secret", confidential_password,
                 "--firmware-file", confidential_firmware,
+                "--chain", "eth",
                 "--json",
                 check=False,
             )

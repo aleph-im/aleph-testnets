@@ -59,7 +59,12 @@ DISK_PASSWORD="${ALEPH_TESTNET_CONFIDENTIAL_PASSWORD:-test-password}"
 FIRMWARE_SHA256="89b76b0e64fe9015084fbffdf8ac98185bafc688bfe7a0b398585c392d03c7ee"
 FIRMWARE_URL="https://api2.aleph.im/api/v0/storage/raw/${FIRMWARE_SHA256}"
 
-BASE_IMAGE_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+# Pinned to a mid-2024 point release: the GRUB embedded in the canonical
+# confidential OVMF (built July 2024) crashes with "unaligned pointer ...
+# Aborted." when loading current bookworm kernels from the encrypted disk.
+# Keep the base image contemporary with the OVMF blob. (Upstream issue:
+# following the docs with bookworm/latest reproduces the crash.)
+BASE_IMAGE_URL="https://cloud.debian.org/images/cloud/bookworm/20240717-1811/debian-12-genericcloud-amd64-20240717-1811.qcow2"
 # Must hold the extracted Debian rootfs (~1.2 GB) + boot partition + LUKS
 # headroom, and stay under the CCN's 4 GiB upload limit.
 IMAGE_SIZE="3GB"

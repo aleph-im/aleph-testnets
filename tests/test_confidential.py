@@ -174,9 +174,15 @@ def test_confidential_instance_create_and_ssh(
         except BaseException:
             # Surface the guest console for diagnosis. `instance logs`
             # streams forever; the timeout bounds it and returns whatever
-            # was captured.
-            logs = aleph_cli("instance", "logs", vm_hash, check=False, timeout=20)
-            print(f"--- instance logs (last 4000 chars) ---\n{logs.stdout[-4000:]}")
+            # was captured. (--chain eth: the operator endpoint is signed.)
+            logs = aleph_cli(
+                "instance", "logs", vm_hash, "--chain", "eth",
+                check=False, timeout=20,
+            )
+            print(
+                f"--- instance logs (last 4000 chars) ---\n{logs.stdout[-4000:]}\n"
+                f"--- instance logs stderr ---\n{(logs.stderr or '')[-1000:]}"
+            )
             raise
 
         # TEE verification — the point of this test.

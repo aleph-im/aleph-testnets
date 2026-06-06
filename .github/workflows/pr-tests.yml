@@ -322,11 +322,16 @@ jobs:
           TEE_HOST="${{ secrets.AMD_SEV_SNP_HOST }}"
           TEE_USER="${{ secrets.AMD_SEV_SNP_USER }}"
           # -n 5000 so the supervisor's startup settings dump
-          # (--print-settings) from this run's install is captured.
+          # (--print-settings) from this run's install is captured. The
+          # controller units carry each VM's qemu stdout (-serial stdio),
+          # i.e. the guest boot console — essential for debugging VMs that
+          # never reach SSH.
           if [ "$TEE_USER" = "root" ]; then
             ssh "root@$TEE_HOST" "journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
+            ssh "root@$TEE_HOST" "journalctl -u 'aleph-vm-controller@*' --no-pager -n 3000" > tee-controllers.txt 2>&1 || true
           else
             ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
+            ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u 'aleph-vm-controller@*' --no-pager -n 3000" > tee-controllers.txt 2>&1 || true
           fi
 
       - name: Upload artifacts
@@ -340,6 +345,7 @@ jobs:
             crn*-supervisor.txt
             crn*-vm-connector.txt
             tee-supervisor.txt
+            tee-controllers.txt
 
       - name: Reset TEE server
         if: always()

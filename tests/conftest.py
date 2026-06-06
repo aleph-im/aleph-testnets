@@ -295,17 +295,34 @@ def confidential_password() -> str:
     return os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_PASSWORD", "test-password")
 
 
+def _upload_with_balance_retry(aleph_cli, path: str, what: str, timeout: float = 180) -> str:
+    """Upload a file, retrying while the CCN reports 'Insufficient balance'.
+
+    On a fresh testnet the account funding flows through nodestatus-balances
+    asynchronously; an early big upload (the confidential fixtures run before
+    every other VM test, alphabetically) can race it. Real cost shortfalls
+    still surface — as a failure after the timeout."""
+    deadline = time.time() + timeout
+    while True:
+        result = aleph_cli(
+            "--json", "file", "upload", path,
+            "--storage-engine", "storage", "--chain", "eth",
+            check=False,
+        )
+        if result.returncode == 0:
+            item_hash = json.loads(result.stdout)["item_hash"]
+            assert item_hash, f"{what} upload should return an item_hash"
+            return item_hash
+        if "Insufficient balance" in (result.stderr or "") and time.time() < deadline:
+            time.sleep(10)
+            continue
+        pytest.fail(f"{what} upload failed: {(result.stderr or '').strip()[-500:]}")
+
+
 @pytest.fixture(scope="session")
 def confidential_rootfs_hash(aleph_cli, confidential_rootfs) -> str:
     """Upload the encrypted rootfs once per session; return its item_hash."""
-    result = aleph_cli(
-        "file", "upload", confidential_rootfs,
-        "--storage-engine", "storage", "--chain", "eth",
-        parse_json=True,
-    )
-    item_hash = result["item_hash"]
-    assert item_hash, "Confidential rootfs upload should return an item_hash"
-    return item_hash
+    return _upload_with_balance_retry(aleph_cli, confidential_rootfs, "Confidential rootfs")
 
 
 @pytest.fixture(scope="session")
@@ -315,14 +332,7 @@ def confidential_firmware_hash(aleph_cli, confidential_firmware) -> str:
     Must be referenced explicitly at create time: the CLI's default firmware
     resolution reads the `vm-images` aggregate, which does not exist on a
     fresh testnet CCN, and the CRN downloads the firmware by this hash."""
-    result = aleph_cli(
-        "file", "upload", confidential_firmware,
-        "--storage-engine", "storage", "--chain", "eth",
-        parse_json=True,
-    )
-    item_hash = result["item_hash"]
-    assert item_hash, "Firmware upload should return an item_hash"
-    return item_hash
+    return _upload_with_balance_retry(aleph_cli, confidential_firmware, "Firmware")
 
 
 @pytest.fixture(scope="session")

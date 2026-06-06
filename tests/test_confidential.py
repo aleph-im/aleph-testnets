@@ -163,10 +163,21 @@ def test_confidential_instance_create_and_ssh(
         poll("Confidential start (measurement + secret injection)", try_start,
              timeout=300, interval=10)
 
-        # The guest now decrypts its disk and boots; wait for SSH.
+        # The guest now decrypts its disk and boots; wait for SSH. Generous
+        # timeout: the port is mapped at allocation time (before secret
+        # injection even happens), and an encrypted boot is slow — OVMF →
+        # grub LUKS unlock → initramfs → cloud-init → sshd.
         data = wait_for_dispatched(aleph_cli, vm_hash, timeout=300)
         ssh_port = int(data["mapped_ports"]["22"])
-        wait_for_ssh(private_key_path, crn_host, ssh_port, timeout=120)
+        try:
+            wait_for_ssh(private_key_path, crn_host, ssh_port, timeout=300)
+        except BaseException:
+            # Surface the guest console for diagnosis. `instance logs`
+            # streams forever; the timeout bounds it and returns whatever
+            # was captured.
+            logs = aleph_cli("instance", "logs", vm_hash, check=False, timeout=20)
+            print(f"--- instance logs (last 4000 chars) ---\n{logs.stdout[-4000:]}")
+            raise
 
         # TEE verification — the point of this test.
         # 1. The guest kernel reports SEV memory encryption active.

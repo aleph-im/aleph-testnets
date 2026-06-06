@@ -28,6 +28,11 @@ authenticates with the same SSH key as the DigitalOcean droplets
 - **Network**: reachable from the CI-created DigitalOcean droplets —
   inbound TCP 4020 (CRN supervisor) and the high ports aleph-vm maps for VM
   SSH forwarding. No NAT/firewall rules that would block them.
+- **IPv6**: a global (public) IPv6 address on the host. The scheduler only
+  places instances on nodes advertising a public /64
+  `ALEPH_VM_IPV6_ADDRESS_POOL`; `crn-up.sh` auto-detects the host's global
+  IPv6 and derives the pool. Without it, no instance — confidential or not —
+  will ever be scheduled on this node.
 - `sevctl` is **not** a manual prerequisite: the aleph-vm `.deb` installs it
   at `/opt/sevctl` on every CI run.
 

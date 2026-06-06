@@ -11,6 +11,7 @@ docs/tee-server.md) and the artifacts prepared by
 scripts/confidential-artifacts.sh. All `ALEPH_TESTNET_CONFIDENTIAL_*`
 fixtures skip when unset, so local runs without a TEE server still pass.
 """
+import ipaddress
 import json
 import urllib.request
 
@@ -67,6 +68,20 @@ def test_confidential_instance_create_and_ssh(
         f"(computing section: {computing!r}); check supervisor.env and that "
         "the host supports SEV/SEV-ES."
     )
+    networking = crn_config.get("networking") or {}
+    ipv6_pool = networking.get("IPV6_ADDRESS_POOL") or ""
+    # aleph-vm defaults to a ULA pool (fc00:...) that the scheduler rejects:
+    # it only places instances on nodes advertising a *public* /64 pool.
+    try:
+        pool_is_public = not ipaddress.ip_network(ipv6_pool, strict=False).is_private
+    except ValueError:
+        pool_is_public = False
+    assert pool_is_public, (
+        f"TEE CRN has no public IPV6_ADDRESS_POOL (got {ipv6_pool!r}); the "
+        "scheduler only places instances on nodes with a public /64 pool. "
+        "The TEE host needs a global IPv6 address (crn-up.sh auto-detects "
+        "it; see docs/tee-server.md)."
+    )
 
     # Wait until the *scheduler* has observed that capability. scheduler-rs
     # only reschedules on VM deltas and node add/remove — a node capability
@@ -82,11 +97,14 @@ def test_confidential_instance_create_and_ssh(
         nodes_list = data.get("items", []) if isinstance(data, dict) else (data or [])
         for n in nodes_list:
             if confidential_crn_host in (n.get("address") or ""):
-                return n if n.get("confidential_computing_enabled") else None
+                # supports_ipv6 is required for *any* instance placement;
+                # without both flags the scheduler will never pick this node.
+                ok = n.get("confidential_computing_enabled") and n.get("supports_ipv6")
+                return n if ok else None
         return None
 
     poll(
-        "Scheduler sees TEE node as confidential-capable",
+        "Scheduler sees TEE node as confidential-capable with IPv6",
         tee_confidential_in_scheduler,
         timeout=300,
         interval=10,

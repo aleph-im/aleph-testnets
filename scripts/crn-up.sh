@@ -342,9 +342,26 @@ ALEPH_VM_ALLOCATION_TOKEN_HASH=$token_hash
 ALEPH_VM_PROGRAM_MEMORY_RESERVED_MIB=0
 EOF
 
-        # Configure IPv6 if the droplet has a public IPv6 address
+        # Static CRNs have no DO-provided IPv6 state file; detect the host's
+        # global IPv6 over SSH. Without an ALEPH_VM_IPV6_ADDRESS_POOL the
+        # scheduler refuses to place *any* instance on the node (it requires
+        # a public /64 pool), confidential ones included.
         local ipv6_file
         ipv6_file=$(crn_dir "$idx")/droplet-ipv6
+        if crn_is_static "$idx" && [ ! -f "$ipv6_file" ]; then
+            local detected_ipv6
+            detected_ipv6=$(ssh_crn "$idx" "ip -6 addr show scope global" 2>/dev/null \
+                | sed -n 's/.*inet6 \([0-9a-f:]*\)\/.*/\1/p' \
+                | grep -v '^f[cd]' | head -1 || true)
+            if [ -n "$detected_ipv6" ]; then
+                echo "$detected_ipv6" > "$ipv6_file"
+                echo "    Detected IPv6: $detected_ipv6"
+            else
+                echo "    WARNING: no global IPv6 on static CRN — the scheduler will not place instances on it"
+            fi
+        fi
+
+        # Configure IPv6 if the CRN has a public IPv6 address
         if [ -f "$ipv6_file" ]; then
             local ipv6_addr
             ipv6_addr=$(cat "$ipv6_file")

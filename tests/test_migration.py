@@ -7,7 +7,6 @@ survived (disk state preserved across migration).
 Requires two CRNs provisioned and linked (CRN_COUNT=2), scheduler dispatch
 enabled, and an Ubuntu rootfs image (ALEPH_TESTNET_ROOTFS).
 """
-import os
 import uuid
 
 import pytest
@@ -15,7 +14,6 @@ import pytest
 from tests.vm_helpers import (
     create_dispatched_instance,
     delete_instance,
-    resolve_crn_address,
     resolve_crn_host,
     ssh_run,
     wait_for_dispatched,
@@ -25,28 +23,18 @@ from tests.vm_helpers import (
 
 @pytest.mark.timeout(900)
 def test_instance_migration(aleph_cli, rootfs_hash, ssh_key_pair, crn_nodes):
-    """End-to-end: create → SSH → unlink CRN → scheduler migrates → SSH new CRN."""
+    """End-to-end: create → SSH → unlink CRN → scheduler migrates → SSH new CRN.
+
+    Treats every registered CRN equally, including the static TEE server — the
+    migration feature should preserve disk state regardless of which node the
+    scheduler picks as the source.
+    """
     private_key_path, public_key_path = ssh_key_pair
 
     # --- Phase 1: Create instance, verify on initial CRN ---
     vm = create_dispatched_instance(
         aleph_cli, rootfs_hash, public_key_path, "migration-instance",
     )
-
-    # Migrating *from* the static TEE CRN hits an upstream scheduler race:
-    # the plain allocation dispatch cold-starts the VM on the target before
-    # the state-preserving migration orchestration runs (the dispatcher then
-    # sees the VM on two nodes and skips it), so the disk marker is lost.
-    # Skip rather than flake; unlinking the TEE here would also strand the
-    # confidential test on reruns.
-    tee_host = os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST", "")
-    if tee_host and tee_host in resolve_crn_address(aleph_cli, vm.crn_hash):
-        delete_instance(aleph_cli, vm.hash)
-        pytest.skip(
-            "scheduler placed the migration VM on the static TEE CRN; "
-            "migration from it is racy upstream (cold-start vs orchestrated "
-            "migration)"
-        )
 
     try:
         wait_for_ssh(private_key_path, vm.crn_host, vm.ssh_port, timeout=60)

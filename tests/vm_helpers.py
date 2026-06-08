@@ -93,7 +93,9 @@ def wait_for_ssh(private_key_path, host, port, timeout=60):
 def wait_for_dispatched(aleph_cli, vm_hash, timeout=300, *, different_from=None, required_port="22"):
     """Poll `instance show --verbose` until the VM is dispatched with the named
     host-side mapped port present. If `different_from` is set, also require the
-    allocated node hash to differ (used to detect post-unlink migration)."""
+    allocated node hash to differ (used to detect post-unlink migration).
+    `required_port=None` waits for placement only — confidential VMs are placed
+    before they start, and ports are only mapped after secret injection."""
     def fetch():
         data = aleph_cli(
             "instance", "show", vm_hash, "--verbose",
@@ -106,11 +108,14 @@ def wait_for_dispatched(aleph_cli, vm_hash, timeout=300, *, different_from=None,
             return None
         if different_from is not None and node == different_from:
             return None
-        mapped = data.get("mapped_ports") or {}
-        if mapped.get(required_port) is None:
-            return None
+        if required_port is not None:
+            mapped = data.get("mapped_ports") or {}
+            if mapped.get(required_port) is None:
+                return None
         return data
-    label = f"VM {vm_hash[:12]} dispatched + port {required_port}"
+    label = f"VM {vm_hash[:12]} dispatched"
+    if required_port is not None:
+        label += f" + port {required_port}"
     if different_from is not None:
         label += f" (different from {different_from[:12]})"
     return poll(label, fetch, timeout=timeout)

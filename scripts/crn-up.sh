@@ -152,6 +152,27 @@ crn_name() {
     cat "$(crn_dir "$idx")/droplet-name"
 }
 
+# Per-CRN optional state files (written by the caller, e.g. the CI workflow):
+#   ssh-user       SSH user for this CRN (default: root). A non-root user
+#                  needs passwordless sudo; remote commands run via `sudo -n`.
+#   static         CRN not managed by this script's lifecycle: --provision and
+#                  --destroy skip it; --install skips base system packages and
+#                  resets aleph-vm state (tee-reset.sh) before installing.
+#   confidential   Enable confidential computing (AMD SEV) in supervisor.env.
+crn_ssh_user() {
+    local f
+    f="$(crn_dir "$1")/ssh-user"
+    if [ -f "$f" ]; then cat "$f"; else echo "root"; fi
+}
+
+crn_is_static() {
+    [ -f "$(crn_dir "$1")/static" ]
+}
+
+crn_is_confidential() {
+    [ -f "$(crn_dir "$1")/confidential" ]
+}
+
 # Fresh droplets intermittently reset SSH connections mid-handshake
 # (kex_exchange_identification: Connection reset by peer), especially under
 # the rapid bursts of short-lived connections this script makes. Mitigate
@@ -179,16 +200,25 @@ retry_255() {
 
 ssh_crn() {
     local idx="$1"; shift
-    local ip
+    local ip user
     ip=$(crn_ip "$idx")
-    retry_255 ssh "${SSH_OPTS[@]}" -i "$SSH_KEY_FILE" "root@$ip" "$@"
+    user=$(crn_ssh_user "$idx")
+    if [ "$user" = "root" ]; then
+        retry_255 ssh "${SSH_OPTS[@]}" -i "$SSH_KEY_FILE" "root@$ip" "$@"
+    else
+        # Non-root: run the remote command through passwordless sudo.
+        retry_255 ssh "${SSH_OPTS[@]}" -i "$SSH_KEY_FILE" "$user@$ip" \
+            "sudo -n bash -c $(printf '%q' "$*")"
+    fi
 }
 
 scp_to_crn() {
     local idx="$1"; shift
-    local ip
+    local ip user
     ip=$(crn_ip "$idx")
-    retry_255 scp "${SSH_OPTS[@]}" -i "$SSH_KEY_FILE" "$@" "root@$ip:/tmp/"
+    user=$(crn_ssh_user "$idx")
+    # /tmp is writable by any user; privileged moves happen via ssh_crn.
+    retry_255 scp "${SSH_OPTS[@]}" -i "$SSH_KEY_FILE" "$@" "$user@$ip:/tmp/"
 }
 
 # ---------------------------------------------------------------------------
@@ -198,6 +228,10 @@ provision() {
     : "${DO_SSH_KEY_FINGERPRINT:?DO_SSH_KEY_FINGERPRINT must be set}"
 
     for idx in $(seq 0 $((CRN_COUNT - 1))); do
+        if crn_is_static "$idx"; then
+            echo "==> CRN $idx is static — skipping provisioning."
+            continue
+        fi
         local dir
         dir=$(crn_dir "$idx")
         mkdir -p "$dir"
@@ -268,11 +302,14 @@ install_crn() {
     local token_hash
     token_hash=$(echo -n "$ALLOCATION_TOKEN" | sha256sum | cut -d' ' -f1)
 
-    # Determine .deb source: branch (CI artifact) or version (GitHub release)
+    # Determine .deb source: branch (CI artifact) or version (GitHub release).
+    # NB: branch CI artifacts only exist for debian-12; releases ship one .deb
+    # per distro (debian-12/13, ubuntu-22.04/24.04), picked per CRN below —
+    # the bundled Python native extensions only import on the matching distro.
     local branch
     branch=$(read_vm_branch)
     local local_deb=""
-    local deb_url=""
+    local version=""
 
     if [ -n "$branch" ]; then
         local_deb="$LOCAL_DIR/aleph-vm.debian-12.deb"
@@ -281,11 +318,8 @@ install_crn() {
         echo "    vm-connector: $connector_image"
         echo "    CCN: $CCN_URL"
     else
-        local version
         version=$(read_vm_version)
-        deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.debian-12.deb"
         echo "==> aleph-vm version: $version"
-        echo "    .deb URL: $deb_url"
         echo "    vm-connector: $connector_image"
         echo "    CCN: $CCN_URL"
     fi
@@ -308,9 +342,26 @@ ALEPH_VM_ALLOCATION_TOKEN_HASH=$token_hash
 ALEPH_VM_PROGRAM_MEMORY_RESERVED_MIB=0
 EOF
 
-        # Configure IPv6 if the droplet has a public IPv6 address
+        # Static CRNs have no DO-provided IPv6 state file; detect the host's
+        # global IPv6 over SSH. Without an ALEPH_VM_IPV6_ADDRESS_POOL the
+        # scheduler refuses to place *any* instance on the node (it requires
+        # a public /64 pool), confidential ones included.
         local ipv6_file
         ipv6_file=$(crn_dir "$idx")/droplet-ipv6
+        if crn_is_static "$idx" && [ ! -f "$ipv6_file" ]; then
+            local detected_ipv6
+            detected_ipv6=$(ssh_crn "$idx" "ip -6 addr show scope global" 2>/dev/null \
+                | sed -n 's/.*inet6 \([0-9a-f:]*\)\/.*/\1/p' \
+                | grep -v '^f[cd]' | head -1 || true)
+            if [ -n "$detected_ipv6" ]; then
+                echo "$detected_ipv6" > "$ipv6_file"
+                echo "    Detected IPv6: $detected_ipv6"
+            else
+                echo "    WARNING: no global IPv6 on static CRN — the scheduler will not place instances on it"
+            fi
+        fi
+
+        # Configure IPv6 if the CRN has a public IPv6 address
         if [ -f "$ipv6_file" ]; then
             local ipv6_addr
             ipv6_addr=$(cat "$ipv6_file")
@@ -331,39 +382,65 @@ EOF
             echo "ALEPH_VM_NODE_HASH=$(cat "$hash_file")" >> "$env_file"
         fi
 
-        # Copy config
-        ssh_crn "$idx" "mkdir -p /etc/aleph-vm"
-        retry_255 scp "${SSH_OPTS[@]}" \
-            -i "$SSH_KEY_FILE" "$env_file" "root@$ip:/etc/aleph-vm/supervisor.env"
+        # Confidential computing (AMD SEV) support
+        if crn_is_confidential "$idx"; then
+            cat >> "$env_file" <<EOF
+ALEPH_VM_ENABLE_CONFIDENTIAL_COMPUTING=true
+ALEPH_VM_SEV_CTL_PATH=/opt/sevctl
+EOF
+            echo "    Confidential computing: enabled"
+        fi
 
-        # Wait for apt lock
-        ssh_crn "$idx" "while fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 2; done"
+        # Copy config (via /tmp: the SSH user may not be root)
+        scp_to_crn "$idx" "$env_file"
+        ssh_crn "$idx" "mkdir -p /etc/aleph-vm && mv /tmp/supervisor.env /etc/aleph-vm/supervisor.env"
 
-        # System update + dependencies
-        echo "    Installing system packages..."
-        # NEEDRESTART_SUSPEND stops needrestart from bouncing sshd after the
-        # upgrade, which would reset the next SSH connection mid-handshake.
-        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
-        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
-        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
+        if crn_is_static "$idx"; then
+            # Static server: base packages are one-time provisioning
+            # (docs/tee-server.md). Reset leftover aleph-vm state from
+            # previous CI runs instead of upgrading the box.
+            echo "    Static CRN: skipping base packages, resetting aleph-vm state..."
+            "$REPO_ROOT/scripts/tee-reset.sh" "$ip" "$(crn_ssh_user "$idx")" "$SSH_KEY_FILE"
+        else
+            # Wait for apt lock
+            ssh_crn "$idx" "while fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do sleep 2; done"
 
-        # Start vm-connector
+            # System update + dependencies
+            echo "    Installing system packages..."
+            # NEEDRESTART_SUSPEND stops needrestart from bouncing sshd after the
+            # upgrade, which would reset the next SSH connection mid-handshake.
+            ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
+            ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 upgrade -y"
+            ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io apparmor-profiles"
+        fi
+
+        # Start vm-connector. Remove any existing container first so a static
+        # server picks up vm-connector image updates between runs.
         echo "    Starting vm-connector..."
         ssh_crn "$idx" "docker pull $connector_image"
-        ssh_crn "$idx" "docker run -d -p 127.0.0.1:4021:4021/tcp --restart=always --name vm-connector $connector_image" || \
-            ssh_crn "$idx" "docker restart vm-connector" || true
+        ssh_crn "$idx" "docker rm -f vm-connector 2>/dev/null || true"
+        ssh_crn "$idx" "docker run -d -p 127.0.0.1:4021:4021/tcp --restart=always --name vm-connector $connector_image"
 
         # Download/upload and install .deb
         if [ -n "$local_deb" ]; then
             echo "    Uploading aleph-vm .deb..."
-            retry_255 scp "${SSH_OPTS[@]}" \
-                -i "$SSH_KEY_FILE" "$local_deb" "root@$ip:/opt/aleph-vm.deb"
+            scp_to_crn "$idx" "$local_deb"
+            ssh_crn "$idx" "mv /tmp/$(basename "$local_deb") /opt/aleph-vm.deb"
         else
-            echo "    Downloading aleph-vm ${version}..."
+            # Pick the release .deb matching this CRN's distro (e.g. a static
+            # TEE server may not run debian-12 like the DO droplets do).
+            local deb_variant
+            deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
+            deb_variant="${deb_variant:-debian-12}"
+            local deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.${deb_variant}.deb"
+            echo "    Downloading aleph-vm ${version} (${deb_variant})..."
             ssh_crn "$idx" "wget -q -O /opt/aleph-vm.deb '$deb_url'"
         fi
         echo "    Installing .deb..."
-        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install -y /opt/aleph-vm.deb"
+        # --reinstall: on a static CRN the same package version may already be
+        # installed (possibly from a different distro's .deb, which leaves the
+        # bundled Python packages broken) — plain `install` would skip it.
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install --reinstall -y /opt/aleph-vm.deb"
 
         # Wait for supervisor to be active
         echo "    Waiting for CRN supervisor..."
@@ -566,6 +643,10 @@ destroy() {
     fi
     for dir in "$LOCAL_DIR/crn"/*/; do
         [ -d "$dir" ] || continue
+        if [ -f "$dir/static" ]; then
+            echo "==> Skipping static CRN state in $dir (not ours to destroy)."
+            continue
+        fi
         if [ -f "$dir/droplet-name" ]; then
             local name
             name=$(cat "$dir/droplet-name")

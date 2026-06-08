@@ -189,6 +189,24 @@ run_tests() {
     export ALEPH_TESTNET_ANVIL_RPC="http://localhost:8545"
     export ALEPH_TESTNET_SCHEDULER_API_URL="http://localhost:8082"
     export ALEPH_TESTNET_ROOTFS="$LOCAL_DIR/rootfs.img"
+    # Confidential VM test artifacts (present only when CI prepared them via
+    # scripts/confidential-artifacts.sh; tests/test_confidential.py skips
+    # when these are unset).
+    if [ -f "$LOCAL_DIR/confidential/rootfs.img" ]; then
+        export ALEPH_TESTNET_CONFIDENTIAL_ROOTFS="$LOCAL_DIR/confidential/rootfs.img"
+    fi
+    if [ -f "$LOCAL_DIR/confidential/OVMF.fd" ]; then
+        export ALEPH_TESTNET_CONFIDENTIAL_FIRMWARE="$LOCAL_DIR/confidential/OVMF.fd"
+    fi
+    # TEE host: first CRN state dir carrying the `confidential` marker.
+    local crn_state_dir
+    for crn_state_dir in "$LOCAL_DIR"/crn/*/; do
+        if [ -f "$crn_state_dir/confidential" ] && [ -f "$crn_state_dir/droplet-ip" ]; then
+            export ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST="$(cat "$crn_state_dir/droplet-ip")"
+            break
+        fi
+    done
+    export ALEPH_TESTNET_CONFIDENTIAL_PASSWORD="${ALEPH_TESTNET_CONFIDENTIAL_PASSWORD:-test-password}"
     cd "$REPO_ROOT"
     pytest -v --junitxml=results.xml "$@"
 }
@@ -197,7 +215,7 @@ dump_logs() {
     echo "==> Dumping container logs..."
     for svc in $(docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus --profile scheduler config --services 2>/dev/null); do
         echo "===== $svc ====="
-        docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus --profile scheduler logs --no-color --tail=200 "$svc" 2>/dev/null || true
+        docker compose "${COMPOSE_FILES[@]}" --profile credits --profile nodestatus --profile scheduler logs --no-color --tail=2000 "$svc" 2>/dev/null || true
     done
 }
 

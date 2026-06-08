@@ -23,13 +23,19 @@ from tests.vm_helpers import (
 
 @pytest.mark.timeout(900)
 def test_instance_migration(aleph_cli, rootfs_hash, ssh_key_pair, crn_nodes):
-    """End-to-end: create → SSH → unlink CRN → scheduler migrates → SSH new CRN."""
+    """End-to-end: create → SSH → unlink CRN → scheduler migrates → SSH new CRN.
+
+    Treats every registered CRN equally, including the static TEE server — the
+    migration feature should preserve disk state regardless of which node the
+    scheduler picks as the source.
+    """
     private_key_path, public_key_path = ssh_key_pair
 
     # --- Phase 1: Create instance, verify on initial CRN ---
     vm = create_dispatched_instance(
         aleph_cli, rootfs_hash, public_key_path, "migration-instance",
     )
+
     try:
         wait_for_ssh(private_key_path, vm.crn_host, vm.ssh_port, timeout=60)
 
@@ -67,4 +73,9 @@ def test_instance_migration(aleph_cli, rootfs_hash, ssh_key_pair, crn_nodes):
             f"but got {persisted!r}"
         )
     finally:
+        # Re-link the CRN this test unlinked: the corechannel aggregate is
+        # shared state, and the static TEE CRN in particular must stay linked
+        # for the confidential test. Best-effort, like delete_instance.
+        # (vm.crn_hash still holds the unlinked node — refresh() is not used.)
+        aleph_cli("node", "link", "--crn", vm.crn_hash, "--chain", "eth", check=False)
         delete_instance(aleph_cli, vm.hash)

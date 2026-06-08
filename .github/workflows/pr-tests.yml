@@ -17,9 +17,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: digitalocean
+    # Serialize across ALL runs (not just per-PR): the static TEE server can
+    # only host one CI run at a time. Caveat: GitHub keeps a single pending
+    # run per group — with 3+ queued runs, intermediate ones are cancelled.
+    concurrency:
+      group: amd-sev-snp-server
+      cancel-in-progress: false
     env:
-      # Number of CRN droplets to provision. The migration test requires 2.
-      CRN_COUNT: 2
+      # DigitalOcean CRN droplets to provision. The migration test requires 2.
+      DO_CRN_COUNT: 2
+      # Total CRNs, including the static TEE server at index 2 (= DO_CRN_COUNT).
+      CRN_COUNT: 3
 
     steps:
       - name: Checkout
@@ -73,9 +81,9 @@ jobs:
             "$CCN_NAME" &
           CCN_PID=$!
 
-          # Create CRN droplets in parallel (one per CRN_COUNT)
+          # Create CRN droplets in parallel (one per DO_CRN_COUNT)
           declare -a CRN_PIDS=()
-          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+          for idx in $(seq 0 $((DO_CRN_COUNT - 1))); do
             crn_name="testnets-crn-${idx}-pr${{ github.event.number }}-${{ github.run_id }}"
             echo "CRN_${idx}_NAME=$crn_name" >> "$GITHUB_ENV"
 
@@ -102,7 +110,7 @@ jobs:
           echo "DROPLET_IPV4=$DROPLET_IPV4" >> "$GITHUB_ENV"
           echo "CCN Droplet IP: $DROPLET_IPV4"
 
-          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+          for idx in $(seq 0 $((DO_CRN_COUNT - 1))); do
             name_var="CRN_${idx}_NAME"
             crn_name="${!name_var}"
 
@@ -123,13 +131,15 @@ jobs:
           until ssh-keyscan -H "$DROPLET_IPV4" >> ~/.ssh/known_hosts 2>/dev/null; do
             sleep 3
           done
-          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+          for idx in $(seq 0 $((DO_CRN_COUNT - 1))); do
             ip_var="CRN_${idx}_IPV4"
             ip="${!ip_var}"
             until ssh-keyscan -H "$ip" >> ~/.ssh/known_hosts 2>/dev/null; do
               sleep 3
             done
           done
+          # Static TEE server: already running, just trust its key.
+          ssh-keyscan -H "${{ secrets.AMD_SEV_SNP_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Install system dependencies (CCN + CRN in parallel)
         run: |
@@ -160,7 +170,7 @@ jobs:
           # crn-up.sh --install is called later from the CCN droplet, but the
           # heavy apt work can happen now alongside the CCN install.
           declare -a CRN_PIDS=()
-          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+          for idx in $(seq 0 $((DO_CRN_COUNT - 1))); do
             ip_var="CRN_${idx}_IPV4"
             ip="${!ip_var}"
             (
@@ -220,7 +230,7 @@ jobs:
         run: |
           # Write per-CRN state so crn-up.sh can find each droplet.
           # crn-up.sh loops over CRN_COUNT and reads .local/crn/<idx>/.
-          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+          for idx in $(seq 0 $((DO_CRN_COUNT - 1))); do
             name_var="CRN_${idx}_NAME"
             ip_var="CRN_${idx}_IPV4"
             ipv6_var="CRN_${idx}_IPV6"
@@ -235,6 +245,16 @@ jobs:
               ssh root@${DROPLET_IPV4} "echo '$crn_ipv6' > /opt/aleph-testnets/.local/crn/${idx}/droplet-ipv6"
             fi
           done
+
+          # Static TEE server as CRN index ${DO_CRN_COUNT} (see docs/tee-server.md):
+          # static = don't provision/destroy/upgrade; confidential = enable
+          # AMD SEV in supervisor.env; ssh-user = non-root login support.
+          TEE_IDX=${DO_CRN_COUNT}
+          ssh root@${DROPLET_IPV4} "mkdir -p /opt/aleph-testnets/.local/crn/${TEE_IDX}"
+          ssh root@${DROPLET_IPV4} "echo 'amd-sev-snp-server' > /opt/aleph-testnets/.local/crn/${TEE_IDX}/droplet-name"
+          ssh root@${DROPLET_IPV4} "echo '${{ secrets.AMD_SEV_SNP_HOST }}' > /opt/aleph-testnets/.local/crn/${TEE_IDX}/droplet-ip"
+          ssh root@${DROPLET_IPV4} "echo '${{ secrets.AMD_SEV_SNP_USER }}' > /opt/aleph-testnets/.local/crn/${TEE_IDX}/ssh-user"
+          ssh root@${DROPLET_IPV4} "touch /opt/aleph-testnets/.local/crn/${TEE_IDX}/static /opt/aleph-testnets/.local/crn/${TEE_IDX}/confidential"
 
           # Copy SSH key to CCN droplet so it can reach the CRNs
           scp ~/.ssh/id_ed25519 root@${DROPLET_IPV4}:/root/.ssh/id_ed25519
@@ -258,6 +278,18 @@ jobs:
             CRN_COUNT=${CRN_COUNT} \
             bash scripts/crn-up.sh --register"
 
+      - name: Prepare confidential VM artifacts
+        run: |
+          # SEVCTL_HOST = CRN 0 (debian-12): its sevctl is built against the
+          # oldest glibc and is guaranteed to run on the (ubuntu-24.04) CCN,
+          # unlike the TEE server's, whose distro may be newer.
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
+            TEE_HOST='${{ secrets.AMD_SEV_SNP_HOST }}' \
+            TEE_USER='${{ secrets.AMD_SEV_SNP_USER }}' \
+            SEVCTL_HOST='${CRN_0_IPV4}' \
+            SSH_KEY_FILE=/root/.ssh/id_ed25519 \
+            bash scripts/confidential-artifacts.sh"
+
       - name: Run tests
         run: |
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --test"
@@ -275,7 +307,7 @@ jobs:
       - name: Collect CRN logs
         if: always()
         run: |
-          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+          for idx in $(seq 0 $((DO_CRN_COUNT - 1))); do
             ip_var="CRN_${idx}_IPV4"
             ip="${!ip_var}"
             if [ -n "${ip:-}" ]; then
@@ -283,6 +315,24 @@ jobs:
               ssh root@${ip} "docker logs vm-connector" > "crn${idx}-vm-connector.txt" 2>&1 || true
             fi
           done
+
+      - name: Collect TEE server logs
+        if: always()
+        run: |
+          TEE_HOST="${{ secrets.AMD_SEV_SNP_HOST }}"
+          TEE_USER="${{ secrets.AMD_SEV_SNP_USER }}"
+          # -n 5000 so the supervisor's startup settings dump
+          # (--print-settings) from this run's install is captured. The
+          # controller units carry each VM's qemu stdout (-serial stdio),
+          # i.e. the guest boot console — essential for debugging VMs that
+          # never reach SSH.
+          if [ "$TEE_USER" = "root" ]; then
+            ssh "root@$TEE_HOST" "journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
+            ssh "root@$TEE_HOST" "journalctl -u 'aleph-vm-controller@*' --no-pager -n 3000" > tee-controllers.txt 2>&1 || true
+          else
+            ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
+            ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u 'aleph-vm-controller@*' --no-pager -n 3000" > tee-controllers.txt 2>&1 || true
+          fi
 
       - name: Upload artifacts
         if: always()
@@ -294,11 +344,18 @@ jobs:
             docker-logs.txt
             crn*-supervisor.txt
             crn*-vm-connector.txt
+            tee-supervisor.txt
+            tee-controllers.txt
+
+      - name: Reset TEE server
+        if: always()
+        run: |
+          bash scripts/tee-reset.sh "${{ secrets.AMD_SEV_SNP_HOST }}" "${{ secrets.AMD_SEV_SNP_USER }}" ~/.ssh/id_ed25519 || true
 
       - name: Destroy CRN Droplets
         if: always()
         run: |
-          for idx in $(seq 0 $((CRN_COUNT - 1))); do
+          for idx in $(seq 0 $((DO_CRN_COUNT - 1))); do
             name_var="CRN_${idx}_NAME"
             crn_name="${!name_var}"
             if [ -n "${crn_name:-}" ]; then

@@ -43,6 +43,29 @@ for section in ('components', 'infrastructure'):
             print(f'{prefix}_TAG={info[\"tag\"]}')
 " > "$DEPLOY_DIR/.env"
 
+    # Generate the scheduler's CRN signing key for EIP-191 allocation auth
+    # (aleph-vm-scheduler#175 / aleph-vm#945). The scheduler signs allocation
+    # requests with this key; CRNs authorize the derived address instead of a
+    # shared token (see crn-up.sh). Persisted under .local/ so re-running
+    # --env keeps the identity already configured on the CRNs.
+    mkdir -p "$LOCAL_DIR"
+    if [ ! -f "$LOCAL_DIR/crn-signer.env" ]; then
+        echo "==> Generating CRN allocation signing key..."
+        set -a
+        source "$DEPLOY_DIR/.env"
+        set +a
+        docker run --rm --entrypoint cast "${ANVIL_IMAGE}:${ANVIL_TAG}" wallet new \
+            | awk '/^Address:/ {print "CRN_SIGNER_ADDRESS=" $2}
+                   /^Private key:/ {print "SCHEDULER_CRN_SIGNING_KEY=" $3}' \
+            > "$LOCAL_DIR/crn-signer.env"
+        if ! grep -q '^SCHEDULER_CRN_SIGNING_KEY=0x' "$LOCAL_DIR/crn-signer.env"; then
+            echo "ERROR: failed to generate the CRN signing key (cast wallet new)" >&2
+            rm -f "$LOCAL_DIR/crn-signer.env"
+            exit 1
+        fi
+    fi
+    cat "$LOCAL_DIR/crn-signer.env" >> "$DEPLOY_DIR/.env"
+
     if [ -x "$BIN_DIR/aleph" ]; then
         echo "==> CLI binary already exists at $BIN_DIR/aleph"
         return
@@ -138,6 +161,12 @@ deploy_contracts() {
     # Start scheduler services (scheduler-rs + scheduler-api)
     echo "==> Starting scheduler services..."
     docker compose "${COMPOSE_FILES[@]}" --profile scheduler up -d scheduler-rs scheduler-api
+
+    # Publish the settings aggregate so CRNs can resolve the scheduler's
+    # EIP-191 signer from the network (aleph-vm#968). Must run before CRNs are
+    # installed/registered so the aggregate exists by their first allocation.
+    echo "==> Publishing settings aggregate..."
+    CCN_URL="$CCN_URL" "$REPO_ROOT/scripts/publish-settings-aggregate.sh"
 
     # Wait for indexer to be ready
     echo "==> Waiting for indexer..."

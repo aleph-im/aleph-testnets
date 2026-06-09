@@ -26,14 +26,17 @@ components:
 
   scheduler-rs:
     image: alephim/scheduler-rs
-    tag: "0.1.1-rc0"
+    tag: "0.1.1"
 
   scheduler-api:
     image: alephim/scheduler-api
-    tag: "0.1.1-rc0"
+    tag: "0.1.1"
 
   aleph-vm:
-    version: "1.12.0"
+    # 1.13.0 is the first release with EIP-191 allocation auth (aleph-vm#945)
+    # and signer resolution from the network settings aggregate (aleph-vm#968,
+    # published by publish-settings-aggregate.sh).
+    version: "1.13.0"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

@@ -162,6 +162,12 @@ deploy_contracts() {
     echo "==> Starting scheduler services..."
     docker compose "${COMPOSE_FILES[@]}" --profile scheduler up -d scheduler-rs scheduler-api
 
+    # Publish the settings aggregate so CRNs can resolve the scheduler's
+    # EIP-191 signer from the network (aleph-vm#968). Must run before CRNs are
+    # installed/registered so the aggregate exists by their first allocation.
+    echo "==> Publishing settings aggregate..."
+    CCN_URL="$CCN_URL" "$REPO_ROOT/scripts/publish-settings-aggregate.sh"
+
     # Wait for indexer to be ready
     echo "==> Waiting for indexer..."
     for i in $(seq 1 24); do

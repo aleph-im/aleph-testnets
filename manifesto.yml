@@ -35,10 +35,10 @@ components:
   aleph-vm:
     # EIP-191 allocation auth (aleph-vm#945) is not in any release yet
     # (latest: 1.12.0, 2026-04-30), so deploy from a branch until one ships.
-    # This branch is main (incl. the cross-endpoint iat replay fix needed for
-    # migrations) plus confidential-VM allocation fixes under test.
+    # This branch sources the authorized allocation signers from the network
+    # settings aggregate (aleph-vm#968), published by publish-settings-aggregate.sh.
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).
-    branch: "fix/confidential-allocation-loop"
+    branch: "feat/allocation-signers-aggregate-default"
     # To deploy from a release instead, replace `branch` with:
     #   version: "1.12.0"
 

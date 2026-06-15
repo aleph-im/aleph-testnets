@@ -26,11 +26,15 @@ components:
 
   scheduler-rs:
     image: alephim/scheduler-rs
-    tag: "0.1.1"
+    # 0.1.2 makes node_watcher poll the v2 executions endpoint (scheduler#188),
+    # so a gracefully-stopping VM stays observed (present as STOPPED) instead of
+    # vanishing from the v1 running-only list and being reported `missing`. Pairs
+    # with aleph-vm's stop=stop_vm fix, which keeps the stopped VM in the pool.
+    tag: "0.1.2"
 
   scheduler-api:
     image: alephim/scheduler-api
-    tag: "0.1.1"
+    tag: "0.1.2"
 
   aleph-vm:
     # TEMPORARY: pinned to the dev-accelerate branch to validate the supervisor

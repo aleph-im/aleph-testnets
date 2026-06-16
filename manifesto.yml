@@ -37,12 +37,13 @@ components:
     tag: "0.1.2"
 
   aleph-vm:
-    # TEMPORARY: pinned to the dev-accelerate branch to validate the supervisor
-    # rework (gRPC supervisor, integration suite, directory-based migration)
-    # against the live migration test before merging aleph-vm#977. Revert to
-    # `version: "1.13.0"` once that branch lands.
+    # aleph-vm#977 (supervisor rework: gRPC supervisor, integration suite,
+    # directory-based migration) merged into `dev`, so track `dev` here to keep
+    # the migration + graceful-stop tests running against the merged code. The
+    # feature is not on `main` or in a release yet; switch to `version: "1.13.0"`
+    # (or the next release tag) once `dev` lands on `main` and a release is cut.
     # Downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).
-    branch: "dev-accelerate"
+    branch: "dev"
     # To deploy from a release instead, replace `branch` with:
     #   version: "1.13.0"
 

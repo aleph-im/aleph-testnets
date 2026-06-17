@@ -37,13 +37,13 @@ components:
     tag: "0.1.2"
 
   aleph-vm:
-    # aleph-vm#977 (supervisor rework: gRPC supervisor, integration suite,
-    # directory-based migration) merged into `dev`, so track `dev` here to keep
-    # the migration + graceful-stop tests running against the merged code. The
-    # feature is not on `main` or in a release yet; switch to `version: "1.13.0"`
-    # (or the next release tag) once `dev` lands on `main` and a release is cut.
+    # Track aleph-vm#980 (od/grpc-only-supervisor, Phase 1 of the gRPC-only
+    # supervisor: the agent is fully decoupled from the VM pool through the
+    # Supervisor interface). Validate the migration + graceful-stop tests
+    # against the branch before it lands on `dev`; switch back to `branch: "dev"`
+    # once #980 merges, then to `version: "1.13.0"` once `dev` lands on `main`.
     # Downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).
-    branch: "dev"
+    branch: "od/grpc-only-supervisor"
     # To deploy from a release instead, replace `branch` with:
     #   version: "1.13.0"
 

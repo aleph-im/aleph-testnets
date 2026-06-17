@@ -17,19 +17,26 @@ from tests.vm_helpers import (
     resolve_crn_host,
     ssh_run,
     wait_for_dispatched,
+    wait_for_scheduler_observed,
     wait_for_ssh,
 )
 
 
 @pytest.mark.timeout(900)
-def test_instance_migration(aleph_cli, rootfs_hash, ssh_key_pair, crn_nodes):
-    """End-to-end: create → SSH → unlink CRN → scheduler migrates → SSH new CRN."""
+def test_instance_migration(aleph_cli, rootfs_hash, ssh_key_pair, crn_nodes, scheduler_api_url):
+    """End-to-end: create → SSH → unlink CRN → scheduler migrates → SSH new CRN.
+
+    Treats every registered CRN equally, including the static TEE server — the
+    migration feature should preserve disk state regardless of which node the
+    scheduler picks as the source.
+    """
     private_key_path, public_key_path = ssh_key_pair
 
     # --- Phase 1: Create instance, verify on initial CRN ---
     vm = create_dispatched_instance(
         aleph_cli, rootfs_hash, public_key_path, "migration-instance",
     )
+
     try:
         wait_for_ssh(private_key_path, vm.crn_host, vm.ssh_port, timeout=60)
 
@@ -42,6 +49,14 @@ def test_instance_migration(aleph_cli, rootfs_hash, ssh_key_pair, crn_nodes):
         )
 
         # --- Phase 2: Unlink the initial CRN and verify migration ---
+        # Gate the unlink on the scheduler having *observed* the VM on its
+        # source node. Until its node_watcher poll registers the VM, the
+        # unlink-triggered reschedule sees it running nowhere and cold-starts
+        # it on the new node (losing the marker) instead of migrating. This is
+        # a real scheduler race in the first poll interval of a VM's life; the
+        # gate sidesteps it so we deterministically exercise the migration path.
+        wait_for_scheduler_observed(scheduler_api_url, vm.hash, vm.crn_hash, timeout=120)
+
         aleph_cli("node", "unlink", "--crn", vm.crn_hash, "--chain", "eth")
 
         # Budget covers both the scheduler moving the allocation and the new CRN
@@ -67,4 +82,9 @@ def test_instance_migration(aleph_cli, rootfs_hash, ssh_key_pair, crn_nodes):
             f"but got {persisted!r}"
         )
     finally:
+        # Re-link the CRN this test unlinked: the corechannel aggregate is
+        # shared state, and the static TEE CRN in particular must stay linked
+        # for the confidential test. Best-effort, like delete_instance.
+        # (vm.crn_hash still holds the unlinked node — refresh() is not used.)
+        aleph_cli("node", "link", "--crn", vm.crn_hash, "--chain", "eth", check=False)
         delete_instance(aleph_cli, vm.hash)

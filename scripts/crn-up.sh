@@ -456,7 +456,11 @@ EOF
         # --reinstall: on a static CRN the same package version may already be
         # installed (possibly from a different distro's .deb, which leaves the
         # bundled Python packages broken) — plain `install` would skip it.
-        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install --reinstall -y /opt/aleph-vm.deb"
+        # --allow-downgrades: the .deb version is `git describe` (commits since
+        # the last tag), so a rebased branch can have a *lower* count than the
+        # .deb left on the static box by a previous run (e.g. a long pre-squash
+        # branch). apt treats that as a downgrade and aborts without this flag.
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install --reinstall --allow-downgrades -y /opt/aleph-vm.deb"
 
         # Wait for supervisor to be active
         echo "    Waiting for CRN supervisor..."

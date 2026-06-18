@@ -36,7 +36,7 @@ components:
     # 1.13.0 is the first release with EIP-191 allocation auth (aleph-vm#945)
     # and signer resolution from the network settings aggregate (aleph-vm#968,
     # published by publish-settings-aggregate.sh).
-    branch: "od/grpc-only-supervisor-phase2"
+    branch: "od/supervisor-vmid-identity"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

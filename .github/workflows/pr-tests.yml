@@ -88,7 +88,7 @@ jobs:
             echo "CRN_${idx}_NAME=$crn_name" >> "$GITHUB_ENV"
 
             doctl compute droplet create \
-              --image debian-12-x64 \
+              --image ubuntu-24-04-x64 \
               --size s-8vcpu-16gb \
               --region ams3 \
               --ssh-keys ${{ vars.DO_SSH_KEY_FINGERPRINT }} \
@@ -280,9 +280,9 @@ jobs:
 
       - name: Prepare confidential VM artifacts
         run: |
-          # SEVCTL_HOST = CRN 0 (debian-12): its sevctl is built against the
-          # oldest glibc and is guaranteed to run on the (ubuntu-24.04) CCN,
-          # unlike the TEE server's, whose distro may be newer.
+          # SEVCTL_HOST = CRN 0 (ubuntu-24.04): all CRNs, the CCN and the static
+          # TEE server now run Ubuntu 24.04, so its sevctl glibc baseline matches
+          # everywhere it runs.
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
             TEE_HOST='${{ secrets.AMD_SEV_SNP_HOST }}' \
             TEE_USER='${{ secrets.AMD_SEV_SNP_USER }}' \

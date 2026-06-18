@@ -43,7 +43,7 @@ components:
     # against the branch before it lands on `dev`; switch back to `branch: "dev"`
     # once #980 merges, then to `version: "1.13.0"` once `dev` lands on `main`.
     # Downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).
-    branch: "od/grpc-only-supervisor"
+    branch: "od/grpc-only-supervisor-phase2"
     # To deploy from a release instead, replace `branch` with:
     #   version: "1.13.0"
 

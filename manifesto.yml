@@ -33,19 +33,16 @@ components:
     tag: "0.1.2"
 
   aleph-vm:
-    # Validating the FULL agent/supervisor boundary stack (all 4 PRs combined):
-    # #986 (PR-1 contract->supervisor_interface) + #988 (PR-3 package move) +
-    # #989 (PR-2 controller split) + #990 (PR-0 vm_hash->vm_id rename). The tip
-    # branch builds a .deb containing all four. Combined-stack GitHub CI is fully
-    # green (PR #991): py.test+linting, droplet integration, builds, CodeQL.
-    # NOTE: test_confidential_instance_create_and_ssh (init-session "VM not found")
-    # is a PRE-EXISTING failure on dev — confirmed by an isolation run pinned to
-    # `branch: "dev"` which failed identically (23 passed, 1 failed). It landed via
-    # #984/#985, NOT this stack (whose confidential code is behaviour-neutral vs
-    # dev). Root cause: crn-up.sh deployed a stale pre-#985 .deb + a reconcile
-    # teardown of awaiting-confidential VMs (the latter fixed by #987). Needs the
-    # testnet .deb-selection fix + SEV hardware to clear. The other 23 tests pass.
-    branch: "od/supervisor-vm-id-rename-impl"
+    # Validating PR #987 (od/fix-confidential-reconcile-teardown = dev + the
+    # confidential fix): record the owner identity BEFORE build_create_vm_spec so
+    # a confidential owner's one-shot init-session resolves owner-auth instead of
+    # 404ing during the rootfs/firmware download window (which made the test's
+    # finally forget the instance, then reconcile reaped it). Root-caused from the
+    # CRN tee-agent journal: init-session 404 was immediate (record-not-found),
+    # upstream of the awaiting-init wait. This run confirms the confidential test
+    # (the only failure in the prior 23-passed/1-failed run) now passes.
+    # The boundary stack (#986+#988+#989+#990) is validated separately via #991.
+    branch: "od/fix-confidential-reconcile-teardown"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

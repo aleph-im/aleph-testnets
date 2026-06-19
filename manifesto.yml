@@ -33,10 +33,13 @@ components:
     tag: "0.1.2"
 
   aleph-vm:
-    # Validate aleph-vm#986 (od/agent-supervisor-contract, PR-1 of the
-    # agent/supervisor boundary split: contract layer + import-linter gate,
-    # behavior-neutral) end-to-end on testnet before it lands on dev.
-    branch: "od/agent-supervisor-contract"
+    # ISOLATION RUN: temporarily pointing at dev to check whether the
+    # test_confidential init-session "VM not found" failure (seen 2x on
+    # od/agent-supervisor-contract / #986) also reproduces on dev. If dev fails
+    # too, the confidential breakage is pre-existing (landed via #984/#985), not
+    # caused by #986. Revert this pin back to "od/agent-supervisor-contract"
+    # after the comparison.
+    branch: "dev"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

@@ -33,16 +33,14 @@ components:
     tag: "0.1.2"
 
   aleph-vm:
-    # Validating PR #987 (od/fix-confidential-reconcile-teardown = dev + the
-    # confidential fix): record the owner identity BEFORE build_create_vm_spec so
-    # a confidential owner's one-shot init-session resolves owner-auth instead of
-    # 404ing during the rootfs/firmware download window (which made the test's
-    # finally forget the instance, then reconcile reaped it). Root-caused from the
-    # CRN tee-agent journal: init-session 404 was immediate (record-not-found),
-    # upstream of the awaiting-init wait. This run confirms the confidential test
-    # (the only failure in the prior 23-passed/1-failed run) now passes.
-    # The boundary stack (#986+#988+#989+#990) is validated separately via #991.
-    branch: "od/fix-confidential-reconcile-teardown"
+    # Validating the two-process gRPC SPLIT end-to-end. dev now carries the whole
+    # agent/supervisor boundary stack (#986/#987/#988/#989/#990 + the firecracker
+    # Configuration vm_id fix), and crn-up.sh now sets ALEPH_VM_SUPERVISOR_GRPC_SOCKET
+    # so the agent dials the supervisor daemon over gRPC instead of embedding its
+    # own pool. Every prior green run validated the in-process path; this is the
+    # first run that exercises the connector. Deploy from dev (the old #987 branch
+    # was deleted after merge).
+    branch: "dev"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

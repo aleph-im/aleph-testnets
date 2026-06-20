@@ -349,6 +349,11 @@ install_crn() {
         # No local AUTHORIZED_ALLOCATION_SIGNERS override: the supervisor sources
         # the Aleph-EIP191-V1 signers from the settings aggregate published at
         # SETTINGS_AGGREGATE_ADDRESS (aleph-vm#968).
+        # Force the two-process gRPC split: with this socket set, the agent
+        # dials the supervisor daemon over gRPC instead of embedding its own
+        # in-process VmPool. Both units read this file (the daemon binds the
+        # socket, the agent dials it). Without it the agent silently runs
+        # in-process and the gRPC connector is never exercised.
         cat > "$env_file" <<EOF
 ALEPH_VM_SUPERVISOR_HOST=0.0.0.0
 ALEPH_VM_DOMAIN_NAME=$ip
@@ -356,6 +361,7 @@ ALEPH_VM_API_SERVER=$CCN_URL
 ALEPH_VM_OWNER_ADDRESS=$CRN_OWNER_ADDR
 ALEPH_VM_SETTINGS_AGGREGATE_ADDRESS=$SETTINGS_AGGREGATE_ADDR
 ALEPH_VM_PROGRAM_MEMORY_RESERVED_MIB=0
+ALEPH_VM_SUPERVISOR_GRPC_SOCKET=/var/lib/aleph/vm/supervisor.sock
 EOF
 
         # Static CRNs have no DO-provided IPv6 state file; detect the host's

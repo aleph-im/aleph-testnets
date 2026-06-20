@@ -108,7 +108,7 @@ fetch_vm_deb_from_branch() {
     local dest="$2"
     local repo="aleph-im/aleph-vm"
     local workflow="build-deb-package-and-integration-tests.yml"
-    local artifact_name="aleph-vm.debian-12.deb"
+    local artifact_name="aleph-vm.ubuntu-24.04.deb"
 
     if ! command -v gh &>/dev/null; then
         echo "ERROR: gh CLI is required to download CI artifacts. Install it from https://cli.github.com/" >&2
@@ -251,7 +251,7 @@ provision() {
 
         echo "==> Creating droplet $name ..."
         doctl compute droplet create \
-            --image debian-12-x64 \
+            --image ubuntu-24-04-x64 \
             --size "$DO_SIZE" \
             --region "$DO_REGION" \
             --ssh-keys "$DO_SSH_KEY_FINGERPRINT" \
@@ -316,16 +316,16 @@ install_crn() {
     echo "==> CRN settings aggregate: $SETTINGS_AGGREGATE_ADDR"
 
     # Determine .deb source: branch (CI artifact) or version (GitHub release).
-    # NB: branch CI artifacts only exist for debian-12; releases ship one .deb
-    # per distro (debian-12/13, ubuntu-22.04/24.04), picked per CRN below —
-    # the bundled Python native extensions only import on the matching distro.
+    # NB: the branch path fetches the ubuntu-24.04 CI artifact — all CRNs and the
+    # static TEE server run Ubuntu 24.04, so the bundled Python native extensions
+    # match. Releases ship one .deb per distro, picked per CRN below.
     local branch
     branch=$(read_vm_branch)
     local local_deb=""
     local version=""
 
     if [ -n "$branch" ]; then
-        local_deb="$LOCAL_DIR/aleph-vm.debian-12.deb"
+        local_deb="$LOCAL_DIR/aleph-vm.ubuntu-24.04.deb"
         mkdir -p "$LOCAL_DIR"
         fetch_vm_deb_from_branch "$branch" "$local_deb"
         echo "    vm-connector: $connector_image"
@@ -349,6 +349,11 @@ install_crn() {
         # No local AUTHORIZED_ALLOCATION_SIGNERS override: the supervisor sources
         # the Aleph-EIP191-V1 signers from the settings aggregate published at
         # SETTINGS_AGGREGATE_ADDRESS (aleph-vm#968).
+        # Force the two-process gRPC split: with this socket set, the agent
+        # dials the supervisor daemon over gRPC instead of embedding its own
+        # in-process VmPool. Both units read this file (the daemon binds the
+        # socket, the agent dials it). Without it the agent silently runs
+        # in-process and the gRPC connector is never exercised.
         cat > "$env_file" <<EOF
 ALEPH_VM_SUPERVISOR_HOST=0.0.0.0
 ALEPH_VM_DOMAIN_NAME=$ip
@@ -356,6 +361,7 @@ ALEPH_VM_API_SERVER=$CCN_URL
 ALEPH_VM_OWNER_ADDRESS=$CRN_OWNER_ADDR
 ALEPH_VM_SETTINGS_AGGREGATE_ADDRESS=$SETTINGS_AGGREGATE_ADDR
 ALEPH_VM_PROGRAM_MEMORY_RESERVED_MIB=0
+ALEPH_VM_SUPERVISOR_GRPC_SOCKET=/var/lib/aleph/vm/supervisor.sock
 EOF
 
         # Static CRNs have no DO-provided IPv6 state file; detect the host's
@@ -447,7 +453,7 @@ EOF
             # TEE server may not run debian-12 like the DO droplets do).
             local deb_variant
             deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
-            deb_variant="${deb_variant:-debian-12}"
+            deb_variant="${deb_variant:-ubuntu-24.04}"
             local deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.${deb_variant}.deb"
             echo "    Downloading aleph-vm ${version} (${deb_variant})..."
             ssh_crn "$idx" "wget -q -O /opt/aleph-vm.deb '$deb_url'"
@@ -456,7 +462,11 @@ EOF
         # --reinstall: on a static CRN the same package version may already be
         # installed (possibly from a different distro's .deb, which leaves the
         # bundled Python packages broken) — plain `install` would skip it.
-        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install --reinstall -y /opt/aleph-vm.deb"
+        # --allow-downgrades: the .deb version is `git describe` (commits since
+        # the last tag), so a rebased branch can have a *lower* count than the
+        # .deb left on the static box by a previous run (e.g. a long pre-squash
+        # branch). apt treats that as a downgrade and aborts without this flag.
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install --reinstall --allow-downgrades -y /opt/aleph-vm.deb"
 
         # Wait for supervisor to be active
         echo "    Waiting for CRN supervisor..."

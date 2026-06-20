@@ -33,10 +33,14 @@ components:
     tag: "0.1.2"
 
   aleph-vm:
-    # 1.13.0 is the first release with EIP-191 allocation auth (aleph-vm#945)
-    # and signer resolution from the network settings aggregate (aleph-vm#968,
-    # published by publish-settings-aggregate.sh).
-    version: "1.13.0"
+    # Validating the two-process gRPC SPLIT end-to-end. dev now carries the whole
+    # agent/supervisor boundary stack (#986/#987/#988/#989/#990 + the firecracker
+    # Configuration vm_id fix), and crn-up.sh now sets ALEPH_VM_SUPERVISOR_GRPC_SOCKET
+    # so the agent dials the supervisor daemon over gRPC instead of embedding its
+    # own pool. Every prior green run validated the in-process path; this is the
+    # first run that exercises the connector. Deploy from dev (the old #987 branch
+    # was deleted after merge).
+    branch: "dev"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

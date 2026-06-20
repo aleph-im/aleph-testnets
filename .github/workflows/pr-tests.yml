@@ -88,7 +88,7 @@ jobs:
             echo "CRN_${idx}_NAME=$crn_name" >> "$GITHUB_ENV"
 
             doctl compute droplet create \
-              --image debian-12-x64 \
+              --image ubuntu-24-04-x64 \
               --size s-8vcpu-16gb \
               --region ams3 \
               --ssh-keys ${{ vars.DO_SSH_KEY_FINGERPRINT }} \
@@ -280,9 +280,9 @@ jobs:
 
       - name: Prepare confidential VM artifacts
         run: |
-          # SEVCTL_HOST = CRN 0 (debian-12): its sevctl is built against the
-          # oldest glibc and is guaranteed to run on the (ubuntu-24.04) CCN,
-          # unlike the TEE server's, whose distro may be newer.
+          # SEVCTL_HOST = CRN 0 (ubuntu-24.04): all CRNs, the CCN and the static
+          # TEE server now run Ubuntu 24.04, so its sevctl glibc baseline matches
+          # everywhere it runs.
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
             TEE_HOST='${{ secrets.AMD_SEV_SNP_HOST }}' \
             TEE_USER='${{ secrets.AMD_SEV_SNP_USER }}' \
@@ -321,18 +321,17 @@ jobs:
         run: |
           TEE_HOST="${{ secrets.AMD_SEV_SNP_HOST }}"
           TEE_USER="${{ secrets.AMD_SEV_SNP_USER }}"
-          # -n 5000 so the supervisor's startup settings dump
-          # (--print-settings) from this run's install is captured. The
-          # controller units carry each VM's qemu stdout (-serial stdio),
-          # i.e. the guest boot console — essential for debugging VMs that
-          # never reach SSH.
-          if [ "$TEE_USER" = "root" ]; then
-            ssh "root@$TEE_HOST" "journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
-            ssh "root@$TEE_HOST" "journalctl -u 'aleph-vm-controller@*' --no-pager -n 3000" > tee-controllers.txt 2>&1 || true
-          else
-            ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
-            ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u 'aleph-vm-controller@*' --no-pager -n 3000" > tee-controllers.txt 2>&1 || true
-          fi
+          # --since (not -n): the supervisor crash-loops noisily during the
+          # static-server reinstall, which blows a fixed -n budget before the
+          # test window. Also capture the agent — in the two-service split it
+          # serves /control/* and /v2/about/executions/list, so the confidential
+          # create/registration (and any error) surfaces there, not in the
+          # supervisor daemon. Controller units carry each VM's qemu serial console.
+          since="45 min ago"
+          if [ "$TEE_USER" = "root" ]; then SSH="ssh root@$TEE_HOST"; SUDO=""; else SSH="ssh $TEE_USER@$TEE_HOST"; SUDO="sudo -n "; fi
+          $SSH "${SUDO}journalctl -u aleph-vm-supervisor.service --no-pager --since '$since'" > tee-supervisor.txt 2>&1 || true
+          $SSH "${SUDO}journalctl -u aleph-vm-agent.service --no-pager --since '$since'" > tee-agent.txt 2>&1 || true
+          $SSH "${SUDO}journalctl -u 'aleph-vm-controller@*' --no-pager --since '$since'" > tee-controllers.txt 2>&1 || true
 
       - name: Upload artifacts
         if: always()
@@ -345,6 +344,7 @@ jobs:
             crn*-supervisor.txt
             crn*-vm-connector.txt
             tee-supervisor.txt
+            tee-agent.txt
             tee-controllers.txt
 
       - name: Reset TEE server

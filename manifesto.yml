@@ -37,13 +37,15 @@ components:
     tag: "0.1.2"
 
   aleph-vm:
-    # Validating the two-process gRPC SPLIT end-to-end. dev now carries the whole
-    # agent/supervisor boundary stack (#986/#987/#988/#989/#990 + the firecracker
-    # Configuration vm_id fix), and crn-up.sh now sets ALEPH_VM_SUPERVISOR_GRPC_SOCKET
-    # so the agent dials the supervisor daemon over gRPC instead of embedding its
-    # own pool. Every prior green run validated the in-process path; this is the
-    # first run that exercises the connector. Deploy from dev (the old #987 branch
-    # was deleted after merge).
+    # Validating aleph-vm dev after the reattach-hardening and per-actor DB
+    # split rounds (#1001-#1010): the supervisor now owns supervisor.sqlite3
+    # (port mappings, with a one-time copy from the legacy agent DB on first
+    # start), delete_vm gained keep_port_mappings for delete+recreate cycles
+    # (crash recovery, message updates keep their host ports), and failed
+    # reattachments are retried in the background with bounded give-up.
+    # crn-up.sh sets ALEPH_VM_SUPERVISOR_GRPC_SOCKET, so this exercises the
+    # two-process gRPC split path end-to-end, including the migration test's
+    # port-forward persistence across the CRN switch.
     branch: "dev"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"

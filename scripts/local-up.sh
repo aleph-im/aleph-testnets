@@ -111,6 +111,24 @@ download_rootfs() {
     echo "==> Rootfs downloaded to $rootfs"
 }
 
+# Official aleph-debian-12-python runtime (mainnet STORE message 63f07193…,
+# stored on IPFS). Programs reference a runtime by item hash and the CRN
+# downloads it from the testnet CCN, so the tests upload this file there.
+RUNTIME_IPFS_CID="QmXb4khKJJazpEuGVzchSy6yeJubGf8gy9Qjd4ZGSY6hXZ"
+
+download_runtime() {
+    local runtime="$LOCAL_DIR/runtime.squashfs"
+    if [ -f "$runtime" ]; then
+        echo "==> Program runtime already downloaded"
+        return
+    fi
+    echo "==> Downloading aleph-debian-12-python runtime (340 MiB)..."
+    mkdir -p "$LOCAL_DIR"
+    curl -fSL -o "$runtime" \
+        "https://ipfs.aleph.im/ipfs/$RUNTIME_IPFS_CID"
+    echo "==> Runtime downloaded to $runtime"
+}
+
 stack_up() {
     # Source .env so image tags are available for key generation
     set -a
@@ -142,6 +160,7 @@ stack_up() {
 
 deploy_contracts() {
     download_rootfs
+    download_runtime
 
     # Export compose files as a space-separated string for child scripts
     export COMPOSE_FILES_STR="${COMPOSE_FILES[*]}"
@@ -218,6 +237,7 @@ run_tests() {
     export ALEPH_TESTNET_ANVIL_RPC="http://localhost:8545"
     export ALEPH_TESTNET_SCHEDULER_API_URL="http://localhost:8082"
     export ALEPH_TESTNET_ROOTFS="$LOCAL_DIR/rootfs.img"
+    export ALEPH_TESTNET_PROGRAM_RUNTIME="$LOCAL_DIR/runtime.squashfs"
     # Confidential VM test artifacts (present only when CI prepared them via
     # scripts/confidential-artifacts.sh; tests/test_confidential.py skips
     # when these are unset).
@@ -283,6 +303,9 @@ case "${1:-}" in
     --download-rootfs)
         download_rootfs
         ;;
+    --download-runtime)
+        download_runtime
+        ;;
     --test)
         shift
         run_tests "$@"
@@ -300,11 +323,11 @@ case "${1:-}" in
         run_tests
         ;;
     --help|-h)
-        echo "Usage: $0 [--env|--up|--deploy-contracts|--download-rootfs|--crn-up|--crn-down|--test|--logs|--down]"
+        echo "Usage: $0 [--env|--up|--deploy-contracts|--download-rootfs|--download-runtime|--crn-up|--crn-down|--test|--logs|--down]"
         exit 0
         ;;
     *)
-        echo "Usage: $0 [--env|--up|--deploy-contracts|--download-rootfs|--crn-up|--crn-down|--test|--logs|--down]"
+        echo "Usage: $0 [--env|--up|--deploy-contracts|--download-rootfs|--download-runtime|--crn-up|--crn-down|--test|--logs|--down]"
         exit 1
         ;;
 esac

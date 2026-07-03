@@ -10,6 +10,7 @@ import os
 import urllib.error
 import urllib.request
 import uuid
+import warnings
 
 import pytest
 
@@ -168,9 +169,13 @@ def test_program_networking(aleph_cli, program_runtime_hash, crn_url):
         status, internet = _http_json_any(f"{base}/internet", timeout=60)
         assert status == 200 and internet.get("result") is True, f"HTTPS egress failed: {internet!r}"
 
-        # Soft check: report IPv6 state in the test output without failing —
-        # see the docstring.
+        # Soft check: report IPv6 state without failing — see the docstring.
+        # A warning surfaces in pytest's summary even when the test passes;
+        # captured stdout of passing tests doesn't.
         status, ipv6 = _http_json_any(f"{base}/ip/6", timeout=60)
-        print(f"IPv6 egress: {'OK via ' + str(ipv6.get('host')) if status == 200 else f'unavailable: {ipv6!r}'}")
+        if status == 200:
+            print(f"IPv6 egress OK via {ipv6.get('host')}")
+        else:
+            warnings.warn(f"IPv6 egress unavailable from program VM: {ipv6!r}")
     finally:
         aleph_cli("program", "delete", program_hash, "-y", "--chain", "eth", check=False)

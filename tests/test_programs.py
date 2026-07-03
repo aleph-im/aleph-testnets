@@ -7,6 +7,7 @@ from the CCN, boot the microVM, and proxy the request into the guest.
 """
 import json
 import os
+import urllib.error
 import urllib.request
 import uuid
 
@@ -45,48 +46,74 @@ def _http_json(url: str, body: dict | None = None, timeout: int = 10) -> dict:
     return json.loads(resp.read())
 
 
-@pytest.mark.timeout(600)
-def test_program_deploy_and_call_endpoints(aleph_cli, program_runtime_hash, crn_url):
-    """End-to-end: program create → CRN boots it on first call → endpoints work."""
-    marker = uuid.uuid4().hex[:12]
+def _http_json_any(url: str, timeout: int = 10) -> tuple[int, dict]:
+    """Like _http_json, but returns (status, body) and parses the JSON body
+    of non-2xx responses too — the diagnostic networking endpoints put their
+    diagnosis in a 503 body, which urllib surfaces as HTTPError."""
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
 
+
+def _create_program(aleph_cli, runtime_hash: str, *extra_args: str) -> str:
+    """Deploy the diagnostic fixture as a PROGRAM; returns the item hash."""
     # Not parse_json=True: create emits two JSON objects (STORE then PROGRAM).
     create_result = aleph_cli(
         "--json", "program", "create",
         DIAGNOSTIC_VM_DIR, "main:app",
-        "--name", "diagnostic-vm",
-        "--runtime", program_runtime_hash,
+        "--runtime", runtime_hash,
         # Explicit sizing: the CLI otherwise requires a `--size` slug, which
         # resolves against the CCN pricing aggregate — absent on a fresh
         # testnet ("Error: --size or --vcpus must be specified").
         "--vcpus", "1",
         "--memory", "512MiB",
-        "--env-vars", f"TEST_VAR={marker}",
         "--chain", "eth",
+        *extra_args,
     )
     messages = _parse_json_stream(create_result.stdout)
     program_hash = next(
         (m["item_hash"] for m in messages if m.get("type") == "PROGRAM"), None
     )
     assert program_hash, f"No PROGRAM message in create output: {create_result.stdout[:500]}"
+    return program_hash
+
+
+def _wait_for_boot(base_url: str) -> dict:
+    """Poll the program's index page until the microVM answers.
+
+    The first call is the slow path: the CRN fetches the runtime (340 MiB)
+    and code volume from the CCN, then boots the microVM — and it is this
+    very request that triggers the provisioning, which blocks until the VM
+    answers. The long per-request timeout lets one request ride through the
+    whole boot instead of cancelling (and potentially restarting) it every
+    10 s; the poll stays as the retry envelope. Raising on an unexpected
+    body (rather than returning None) surfaces it in poll's failure message.
+    """
+    def first_call():
+        data = _http_json(f"{base_url}/", timeout=120)
+        if data.get("app") != "diagnostic-vm":
+            raise AssertionError(f"unexpected index response: {data!r}")
+        return data
+
+    return poll("Program boot via CRN /vm/ path", first_call, timeout=240, interval=10)
+
+
+@pytest.mark.timeout(600)
+def test_program_deploy_and_call_endpoints(aleph_cli, program_runtime_hash, crn_url):
+    """End-to-end: program create → CRN boots it on first call → endpoints work."""
+    marker = uuid.uuid4().hex[:12]
+    program_hash = _create_program(
+        aleph_cli, program_runtime_hash,
+        "--name", "diagnostic-vm",
+        "--env-vars", f"TEST_VAR={marker}",
+    )
 
     base = f"{crn_url}/vm/{program_hash}"
     try:
-        # First call is the slow path: the CRN fetches the runtime (340 MiB)
-        # and code volume from the CCN, then boots the microVM — and it is
-        # this very request that triggers the provisioning, which blocks
-        # until the VM answers. The long per-request timeout lets one
-        # request ride through the whole boot instead of cancelling (and
-        # potentially restarting) it every 10 s; the poll stays as the
-        # retry envelope. Raising on an unexpected body (rather than
-        # returning None) surfaces it in poll's failure message.
-        def first_call():
-            data = _http_json(f"{base}/", timeout=120)
-            if data.get("app") != "diagnostic-vm":
-                raise AssertionError(f"unexpected index response: {data!r}")
-            return data
-
-        index = poll("Program boot via CRN /vm/ path", first_call, timeout=240, interval=10)
+        index = _wait_for_boot(base)
         assert index["status"] == "ok"
 
         # Query-string plumbing through the CRN proxy.
@@ -100,6 +127,15 @@ def test_program_deploy_and_call_endpoints(aleph_cli, program_runtime_hash, crn_
         # PROGRAM message env vars reach the guest process.
         environ = _http_json(f"{base}/environ")
         assert environ.get("TEST_VAR") == marker
+
+        # Isolation: created without --internet (environment.internet=false)
+        # the guest gets no network egress, so the connectivity check must
+        # report total failure. The /vm/ proxy rides on vsock, not the guest
+        # network, so the endpoint stays reachable regardless. 60 s client
+        # timeout: the guest burns up to 3×5 s of connect timeouts first.
+        status, no_net = _http_json_any(f"{base}/internet", timeout=60)
+        assert status == 503, f"internet-less program reports connectivity: {no_net!r}"
+        assert no_net.get("result") is False
     finally:
         # Best-effort FORGET (also forgets the code STORE). -y: a confirmation
         # prompt on non-TTY stdin reads EOF and silently aborts the FORGET.

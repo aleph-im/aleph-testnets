@@ -140,3 +140,37 @@ def test_program_deploy_and_call_endpoints(aleph_cli, program_runtime_hash, crn_
         # Best-effort FORGET (also forgets the code STORE). -y: a confirmation
         # prompt on non-TTY stdin reads EOF and silently aborts the FORGET.
         aleph_cli("program", "delete", program_hash, "-y", "--chain", "eth", check=False)
+
+
+@pytest.mark.timeout(600)
+def test_program_networking(aleph_cli, program_runtime_hash, crn_url):
+    """Networking inside a program created with --internet: DNS resolution,
+    IPv4 egress, and full HTTPS internet access must work. IPv6 is recorded
+    but not asserted — not every testnet CRN has a global IPv6, and crn_url
+    picks whichever node the CCN lists first."""
+    program_hash = _create_program(
+        aleph_cli, program_runtime_hash,
+        "--name", "diagnostic-vm-net",
+        "--internet",
+    )
+
+    base = f"{crn_url}/vm/{program_hash}"
+    try:
+        _wait_for_boot(base)
+
+        status, dns = _http_json_any(f"{base}/dns", timeout=60)
+        assert status == 200, f"DNS resolution failed in guest: {dns!r}"
+        assert dns.get("ipv4"), f"no IPv4 answer for example.org: {dns!r}"
+
+        status, ipv4 = _http_json_any(f"{base}/ip/4", timeout=60)
+        assert status == 200 and ipv4.get("result") is True, f"IPv4 egress failed: {ipv4!r}"
+
+        status, internet = _http_json_any(f"{base}/internet", timeout=60)
+        assert status == 200 and internet.get("result") is True, f"HTTPS egress failed: {internet!r}"
+
+        # Soft check: report IPv6 state in the test output without failing —
+        # see the docstring.
+        status, ipv6 = _http_json_any(f"{base}/ip/6", timeout=60)
+        print(f"IPv6 egress: {'OK via ' + str(ipv6.get('host')) if status == 200 else f'unavailable: {ipv6!r}'}")
+    finally:
+        aleph_cli("program", "delete", program_hash, "-y", "--chain", "eth", check=False)

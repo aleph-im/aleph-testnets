@@ -37,16 +37,13 @@ components:
     tag: "0.1.2"
 
   aleph-vm:
-    # Validating aleph-vm dev after the reattach-hardening and per-actor DB
-    # split rounds (#1001-#1010): the supervisor now owns supervisor.sqlite3
-    # (port mappings, with a one-time copy from the legacy agent DB on first
-    # start), delete_vm gained keep_port_mappings for delete+recreate cycles
-    # (crash recovery, message updates keep their host ports), and failed
-    # reattachments are retried in the background with bounded give-up.
-    # crn-up.sh sets ALEPH_VM_SUPERVISOR_GRPC_SOCKET, so this exercises the
-    # two-process gRPC split path end-to-end, including the migration test's
-    # port-forward persistence across the CRN switch.
-    branch: "dev"
+    # Validating aleph-vm#1012 (od/supervisor-split-endgame, gRPC-only agent)
+    # against the FULL suite, now including the PROGRAM/microVM regression
+    # tests (#28): on-demand boot via the CRN /vm/<hash>/ path, proxy
+    # plumbing, env vars. The instance suite already passed 24/24 on this
+    # branch (run 28631798922); dev passed 25/25 with programs included
+    # (run 28656915928). This run closes the matrix: #1012 x programs.
+    branch: "od/supervisor-split-endgame"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

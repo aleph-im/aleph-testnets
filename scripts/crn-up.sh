@@ -355,7 +355,7 @@ ALEPH_VM_DOMAIN_NAME=$ip
 ALEPH_VM_API_SERVER=$CCN_URL
 ALEPH_VM_OWNER_ADDRESS=$CRN_OWNER_ADDR
 ALEPH_VM_SETTINGS_AGGREGATE_ADDRESS=$SETTINGS_AGGREGATE_ADDR
-ALEPH_VM_PROGRAM_MEMORY_RESERVED_MIB=0
+ALEPH_VM_PROGRAM_MEMORY_RESERVED_MIB=2048
 EOF
 
         # Static CRNs have no DO-provided IPv6 state file; detect the host's
@@ -456,7 +456,10 @@ EOF
         # --reinstall: on a static CRN the same package version may already be
         # installed (possibly from a different distro's .deb, which leaves the
         # bundled Python packages broken) — plain `install` would skip it.
-        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install --reinstall -y /opt/aleph-vm.deb"
+        # --allow-downgrades: a previous run on another branch may have left a
+        # NEWER aleph-vm on the static CRN (branch builds carry higher version
+        # strings); without the flag apt errors out instead of downgrading.
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install --reinstall --allow-downgrades -y /opt/aleph-vm.deb"
 
         # Wait for supervisor to be active
         echo "    Waiting for CRN supervisor..."

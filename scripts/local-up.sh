@@ -111,6 +111,29 @@ download_rootfs() {
     echo "==> Rootfs downloaded to $rootfs"
 }
 
+# Official aleph-debian-12-python runtime (mainnet STORE message 63f07193…,
+# stored on IPFS). Programs reference a runtime by item hash and the CRN
+# downloads it from the testnet CCN, so the tests upload this file there.
+RUNTIME_IPFS_CID="QmXb4khKJJazpEuGVzchSy6yeJubGf8gy9Qjd4ZGSY6hXZ"
+# CID-suffixed cache name: bumping the CID above invalidates the cache instead
+# of silently reusing the previously downloaded runtime.
+RUNTIME_IMAGE="$LOCAL_DIR/runtime-$RUNTIME_IPFS_CID.squashfs"
+
+download_runtime() {
+    if [ -f "$RUNTIME_IMAGE" ]; then
+        echo "==> Program runtime already downloaded"
+        return
+    fi
+    echo "==> Downloading aleph-debian-12-python runtime (340 MiB)..."
+    mkdir -p "$LOCAL_DIR"
+    # Download to a temp name, then mv: a curl that dies mid-transfer must
+    # not leave a truncated file that the -f cache check above then trusts.
+    curl -fSL --retry 3 -o "$RUNTIME_IMAGE.part" \
+        "https://ipfs.aleph.im/ipfs/$RUNTIME_IPFS_CID"
+    mv "$RUNTIME_IMAGE.part" "$RUNTIME_IMAGE"
+    echo "==> Runtime downloaded to $RUNTIME_IMAGE"
+}
+
 stack_up() {
     # Source .env so image tags are available for key generation
     set -a
@@ -142,6 +165,7 @@ stack_up() {
 
 deploy_contracts() {
     download_rootfs
+    download_runtime
 
     # Export compose files as a space-separated string for child scripts
     export COMPOSE_FILES_STR="${COMPOSE_FILES[*]}"
@@ -218,6 +242,7 @@ run_tests() {
     export ALEPH_TESTNET_ANVIL_RPC="http://localhost:8545"
     export ALEPH_TESTNET_SCHEDULER_API_URL="http://localhost:8082"
     export ALEPH_TESTNET_ROOTFS="$LOCAL_DIR/rootfs.img"
+    export ALEPH_TESTNET_PROGRAM_RUNTIME="$RUNTIME_IMAGE"
     # Confidential VM test artifacts (present only when CI prepared them via
     # scripts/confidential-artifacts.sh; tests/test_confidential.py skips
     # when these are unset).
@@ -283,6 +308,9 @@ case "${1:-}" in
     --download-rootfs)
         download_rootfs
         ;;
+    --download-runtime)
+        download_runtime
+        ;;
     --test)
         shift
         run_tests "$@"
@@ -300,11 +328,11 @@ case "${1:-}" in
         run_tests
         ;;
     --help|-h)
-        echo "Usage: $0 [--env|--up|--deploy-contracts|--download-rootfs|--crn-up|--crn-down|--test|--logs|--down]"
+        echo "Usage: $0 [--env|--up|--deploy-contracts|--download-rootfs|--download-runtime|--crn-up|--crn-down|--test|--logs|--down]"
         exit 0
         ;;
     *)
-        echo "Usage: $0 [--env|--up|--deploy-contracts|--download-rootfs|--crn-up|--crn-down|--test|--logs|--down]"
+        echo "Usage: $0 [--env|--up|--deploy-contracts|--download-rootfs|--download-runtime|--crn-up|--crn-down|--test|--logs|--down]"
         exit 1
         ;;
 esac

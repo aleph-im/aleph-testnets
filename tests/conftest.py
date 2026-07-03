@@ -8,6 +8,8 @@ import pytest
 import urllib.request
 import urllib.error
 
+from tests.vm_helpers import NODESTATUS_ADDR
+
 
 def _require_env(name: str) -> str:
     val = os.environ.get(name)
@@ -260,6 +262,43 @@ def rootfs_hash(aleph_cli, rootfs_image) -> str:
     item_hash = result["item_hash"]
     assert item_hash, "Upload should return an item_hash"
     return item_hash
+
+
+@pytest.fixture(scope="session")
+def program_runtime() -> str:
+    path = os.environ.get("ALEPH_TESTNET_PROGRAM_RUNTIME", "")
+    if not path or not os.path.exists(path):
+        pytest.skip("No program runtime — program tests require ALEPH_TESTNET_PROGRAM_RUNTIME")
+    return path
+
+
+@pytest.fixture(scope="session")
+def program_runtime_hash(aleph_cli, program_runtime) -> str:
+    """Upload the runtime squashfs once per session; return its item_hash.
+
+    Must be referenced explicitly at `program create` time: the CLI's default
+    runtime resolution reads the `vm-images` aggregate, which does not exist
+    on a fresh testnet CCN, and the CRN downloads the runtime by this hash."""
+    return _upload_with_balance_retry(aleph_cli, program_runtime, "Program runtime")
+
+
+@pytest.fixture(scope="session")
+def crn_url(aleph_cli) -> str:
+    """Corechannel-registered API URL of the first CRN (e.g. http://1.2.3.4:4020).
+
+    Programs run on-demand on whichever CRN receives the HTTP call — no
+    scheduler placement to resolve, so any registered CRN will do. (The
+    `crn_nodes` fixture instead demands >=2 nodes, for migration tests.)"""
+    nodes = aleph_cli(
+        "node", "list",
+        "--type", "crn",
+        "--all",
+        "--corechannel-address", NODESTATUS_ADDR,
+        parse_json=True,
+    )
+    if not nodes:
+        pytest.skip("No CRNs registered — program tests require a registered CRN")
+    return nodes[0]["address"].rstrip("/")
 
 
 @pytest.fixture(scope="session")

@@ -56,6 +56,11 @@ def test_program_deploy_and_call_endpoints(aleph_cli, program_runtime_hash, crn_
         DIAGNOSTIC_VM_DIR, "main:app",
         "--name", "diagnostic-vm",
         "--runtime", program_runtime_hash,
+        # Explicit sizing: the CLI otherwise requires a `--size` slug, which
+        # resolves against the CCN pricing aggregate — absent on a fresh
+        # testnet ("Error: --size or --vcpus must be specified").
+        "--vcpus", "1",
+        "--memory", "512MiB",
         "--env-vars", f"TEST_VAR={marker}",
         "--chain", "eth",
     )

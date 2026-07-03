@@ -68,10 +68,18 @@ def test_program_deploy_and_call_endpoints(aleph_cli, program_runtime_hash, crn_
     base = f"{crn_url}/vm/{program_hash}"
     try:
         # First call is the slow path: the CRN fetches the runtime (340 MiB)
-        # and code volume from the CCN, then boots the microVM.
+        # and code volume from the CCN, then boots the microVM — and it is
+        # this very request that triggers the provisioning, which blocks
+        # until the VM answers. The long per-request timeout lets one
+        # request ride through the whole boot instead of cancelling (and
+        # potentially restarting) it every 10 s; the poll stays as the
+        # retry envelope. Raising on an unexpected body (rather than
+        # returning None) surfaces it in poll's failure message.
         def first_call():
-            data = _http_json(f"{base}/")
-            return data if data.get("app") == "diagnostic-vm" else None
+            data = _http_json(f"{base}/", timeout=120)
+            if data.get("app") != "diagnostic-vm":
+                raise AssertionError(f"unexpected index response: {data!r}")
+            return data
 
         index = poll("Program boot via CRN /vm/ path", first_call, timeout=240, interval=10)
         assert index["status"] == "ok"

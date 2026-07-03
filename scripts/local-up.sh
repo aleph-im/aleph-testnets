@@ -124,8 +124,11 @@ download_runtime() {
     fi
     echo "==> Downloading aleph-debian-12-python runtime (340 MiB)..."
     mkdir -p "$LOCAL_DIR"
-    curl -fSL -o "$runtime" \
+    # Download to a temp name, then mv: a curl that dies mid-transfer must
+    # not leave a truncated file that the -f cache check above then trusts.
+    curl -fSL --retry 3 -o "$runtime.part" \
         "https://ipfs.aleph.im/ipfs/$RUNTIME_IPFS_CID"
+    mv "$runtime.part" "$runtime"
     echo "==> Runtime downloaded to $runtime"
 }
 

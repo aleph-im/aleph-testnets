@@ -37,13 +37,11 @@ components:
     tag: "0.1.2"
 
   aleph-vm:
-    # Validating aleph-vm#1012 (od/supervisor-split-endgame, gRPC-only agent)
-    # against the FULL suite, now including the PROGRAM/microVM regression
-    # tests (#28): on-demand boot via the CRN /vm/<hash>/ path, proxy
-    # plumbing, env vars. The instance suite already passed 24/24 on this
-    # branch (run 28631798922); dev passed 25/25 with programs included
-    # (run 28656915928). This run closes the matrix: #1012 x programs.
-    branch: "od/supervisor-split-endgame"
+    # aleph-vm dev, now including #1012 (gRPC-only agent, total agent /
+    # supervisor import separation). The split-endgame branch passed the
+    # full 25-test suite (instances + migration + PROGRAM/microVM flow) on
+    # run 28658683992 before merging; its tree is identical to this dev.
+    branch: "dev"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

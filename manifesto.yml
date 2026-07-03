@@ -46,7 +46,10 @@ components:
     # crn-up.sh sets ALEPH_VM_SUPERVISOR_GRPC_SOCKET, so this exercises the
     # two-process gRPC split path end-to-end, including the migration test's
     # port-forward persistence across the CRN switch.
-    branch: "dev"
+    # TEMPORARY: validating aleph-vm#1012 (split endgame: gRPC-only mode,
+    # total agent/supervisor import separation) before merge. Restore to
+    # branch: "dev" once #1012 lands.
+    branch: "od/supervisor-split-endgame"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

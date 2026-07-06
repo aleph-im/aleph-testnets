@@ -1,12 +1,17 @@
 name: aleph-vm Upgrade Checks
 
 # This branch's only job: validate aleph-vm upgrades and the Rust supervisor
-# adoption path without a human in the loop (see README.md). Trigger manually
-# against this branch with the aleph-vm increment branch under test:
-#
-#   gh workflow run upgrade-checks.yml --ref od/aleph-vm-upgrade-checks \
-#     -f candidate_branch=od/rust-daemon-inc2 -f rust_swap=true
+# adoption path without a human in the loop (see README.md). This workflow
+# lives only on this branch and never merges to main: every push to the
+# branch runs it with the `env` defaults below (edit them, commit, push to
+# re-run with different parameters), and the permanently-open draft PR from
+# this branch gives the runs a checks UI. workflow_dispatch is kept for
+# parameterized manual runs but GitHub only exposes it if this file also
+# exists on the repository default branch; pushes are the primary trigger.
 on:
+  push:
+    branches:
+      - od/aleph-vm-upgrade-checks
   workflow_dispatch:
     inputs:
       baseline_version:
@@ -29,6 +34,15 @@ on:
 permissions:
   contents: read
   actions: read
+
+# Defaults for push-triggered runs; workflow_dispatch inputs override them.
+env:
+  BASELINE_VERSION: "1.13.0"
+  CANDIDATE_BRANCH: "dev"
+  # Scenario B (ALEPH_VM_SUPERVISOR_IMPL python<->rust swap) needs a
+  # candidate deb that ships the launcher (aleph-vm PR #1024 onwards).
+  RUST_SWAP: "false"
+  RUST_LIFECYCLE: "false"
 
 jobs:
   upgrade-checks:
@@ -246,7 +260,7 @@ jobs:
             CCN_URL=http://${DROPLET_IPV4}:4024 \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             CRN_COUNT=${CRN_COUNT} \
-            ALEPH_VM_VERSION='${{ inputs.baseline_version }}' \
+            ALEPH_VM_VERSION='${{ inputs.baseline_version || env.BASELINE_VERSION }}' \
             bash scripts/crn-up.sh --install"
 
           # Register CRNs in corechannel aggregate
@@ -260,12 +274,14 @@ jobs:
         run: |
           # GH_TOKEN: the tests call crn-up.sh --upgrade, which downloads the
           # candidate deb from aleph-im/aleph-vm CI artifacts via gh.
-          RUST_SWAP=0; [ "${{ inputs.rust_swap }}" = "true" ] && RUST_SWAP=1
-          RUST_LC=0; [ "${{ inputs.rust_lifecycle }}" = "true" ] && RUST_LC=1
+          # Dispatch inputs win; push-triggered runs fall back to the env
+          # defaults (inputs.* is empty on push events).
+          RUST_SWAP=0; [ "${{ inputs.rust_swap || env.RUST_SWAP }}" = "true" ] && RUST_SWAP=1
+          RUST_LC=0; [ "${{ inputs.rust_lifecycle || env.RUST_LIFECYCLE }}" = "true" ] && RUST_LC=1
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
-            ALEPH_VM_UPGRADE_BRANCH='${{ inputs.candidate_branch }}' \
+            ALEPH_VM_UPGRADE_BRANCH='${{ inputs.candidate_branch || env.CANDIDATE_BRANCH }}' \
             UPGRADE_CHECK_RUST=$RUST_SWAP \
             UPGRADE_CHECK_RUST_LIFECYCLE=$RUST_LC \
             bash scripts/local-up.sh --test"

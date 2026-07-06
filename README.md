@@ -50,10 +50,15 @@ pin). The mid-test upgrade is performed by `scripts/crn-up.sh --upgrade`,
 which the tests invoke themselves; it needs an authenticated `gh` CLI
 (`GH_TOKEN`) to download the candidate deb from aleph-vm CI artifacts.
 
-In CI, `.github/workflows/upgrade-checks.yml` wires all of this up and is
-triggered manually (`workflow_dispatch`) with the baseline version and
-candidate branch as inputs.
+In CI, `.github/workflows/upgrade-checks.yml` wires all of this up. It runs
+on every push to this branch with the defaults committed in its `env` block
+(baseline version, candidate branch, rust scenario flags): edit the block,
+commit and push to run with different parameters. The branch keeps a
+permanently-open draft PR so the runs show up as checks; the PR never
+merges. `workflow_dispatch` inputs override the defaults, but GitHub only
+exposes dispatch for workflows present on the default branch, so pushes are
+the primary trigger.
 
 The manifesto pins `aleph-vm` to `branch: "dev"` on this branch; runs override
-it (via `ALEPH_VM_UPGRADE_BRANCH` / the workflow input) to the increment
-branch under test.
+it (via `ALEPH_VM_UPGRADE_BRANCH` / the `env` default / the workflow input)
+to the increment branch under test.

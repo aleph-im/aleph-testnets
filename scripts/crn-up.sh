@@ -569,6 +569,8 @@ upgrade_crn() {
         # --allow-downgrades for the same reasons as --install (identical or
         # lower version strings must still (re)install).
         echo "    Installing .deb..."
+        local upgrade_ts
+        upgrade_ts=$(ssh_crn "$idx" "date -u '+%Y-%m-%d %H:%M:%S'")
         ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install --reinstall --allow-downgrades -y /opt/aleph-vm-upgrade.deb"
         echo "    aleph-vm after:  $(ssh_crn "$idx" "dpkg-query -W -f='\${Version}' aleph-vm" 2>/dev/null || echo "unknown")"
 
@@ -587,6 +589,14 @@ upgrade_crn() {
         done
 
         if $ready; then
+            # The daemon restarted during the deb install; a scheduler poll
+            # in that window marks the node Unreachable and nothing but the
+            # next successful poll clears it. Tests dispatch new VMs right
+            # after --upgrade returns, so wait for that poll here.
+            echo "    Waiting for a successful scheduler poll..."
+            if ! wait_for_scheduler_poll "$idx" "$upgrade_ts"; then
+                echo "    WARNING: no successful scheduler poll observed within 180s." >&2
+            fi
             echo "    CRN $idx upgraded and serving on $ip"
         else
             echo "ERROR: CRN $idx did not come back after upgrade (150s)" >&2
@@ -608,6 +618,26 @@ upgrade_crn() {
 # ---------------------------------------------------------------------------
 # Phase 3: Register CRN in corechannel aggregate
 # ---------------------------------------------------------------------------
+# Wait until the scheduler has successfully polled this CRN's /status/config
+# after $2 (a "+%Y-%m-%d %H:%M:%S" UTC timestamp on the CRN's clock). The
+# scheduler's node watcher polls every 30s but has no reschedule trigger for
+# an unreachable node becoming reachable, so a VM message arriving while the
+# node snapshot still says Unreachable stays unscheduled until unrelated
+# churn (run 28823959954 wedged this way). A logged 200 proves the snapshot
+# is healthy before the tests start creating VMs.
+wait_for_scheduler_poll() {
+    local idx="$1" since_ts="$2"
+    for _ in $(seq 1 36); do
+        # Both units: pre-split debs serve the HTTP API from the supervisor,
+        # split-package debs from the agent.
+        if ssh_crn "$idx" "journalctl -u aleph-vm-supervisor.service -u aleph-vm-agent.service --since '$since_ts' --no-pager 2>/dev/null | grep 'GET /status/config' | grep -q ' 200 '"; then
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+
 register_crn() {
     : "${CCN_URL:?CCN_URL must be set (e.g. http://1.2.3.4:4024)}"
 
@@ -713,6 +743,36 @@ register_crn() {
         echo "    CRN hash: $crn_hash"
         echo "$crn_hash" > "$(crn_dir "$idx")/crn-hash"
 
+        # Update supervisor.env with node hash and restart BEFORE linking.
+        # Linking (staking) is what makes the scheduler start polling this
+        # node, and its node watcher has no reschedule trigger for an
+        # unreachable node becoming reachable: a first poll landing in the
+        # restart window wedges every unscheduled VM until unrelated churn
+        # arrives (run 28823959954). Restart first, wait for the API, then
+        # stake a node that is already serving.
+        echo "    Setting ALEPH_VM_NODE_HASH on CRN..."
+        ssh_crn "$idx" "grep -q ALEPH_VM_NODE_HASH /etc/aleph-vm/supervisor.env && \
+            sed -i 's/^ALEPH_VM_NODE_HASH=.*/ALEPH_VM_NODE_HASH=$crn_hash/' /etc/aleph-vm/supervisor.env || \
+            echo 'ALEPH_VM_NODE_HASH=$crn_hash' >> /etc/aleph-vm/supervisor.env"
+        local restart_ts
+        restart_ts=$(ssh_crn "$idx" "date -u '+%Y-%m-%d %H:%M:%S'")
+        ssh_crn "$idx" "systemctl restart aleph-vm-supervisor.service"
+
+        echo "    Waiting for the CRN API to answer..."
+        local serving=false
+        for _ in $(seq 1 30); do
+            if ssh_crn "$idx" "curl -sf -o /dev/null http://localhost:4020/about/usage/system" 2>/dev/null; then
+                serving=true
+                break
+            fi
+            sleep 5
+        done
+        if ! $serving; then
+            echo "    ERROR: CRN API did not come back within 150s of the restart." >&2
+            ssh_crn "$idx" "journalctl -u aleph-vm-supervisor.service --no-pager -n 50" || true
+            continue
+        fi
+
         # Link CRN to CCN
         echo "    Linking CRN to CCN..."
         ALEPH_PRIVATE_KEY="$CRN_OWNER_KEY" "$aleph_cli" \
@@ -721,12 +781,15 @@ register_crn() {
             echo "    WARNING: link failed: $(cat "$err_log")"
         }
 
-        # Update supervisor.env with node hash
-        echo "    Setting ALEPH_VM_NODE_HASH on CRN..."
-        ssh_crn "$idx" "grep -q ALEPH_VM_NODE_HASH /etc/aleph-vm/supervisor.env && \
-            sed -i 's/^ALEPH_VM_NODE_HASH=.*/ALEPH_VM_NODE_HASH=$crn_hash/' /etc/aleph-vm/supervisor.env || \
-            echo 'ALEPH_VM_NODE_HASH=$crn_hash' >> /etc/aleph-vm/supervisor.env"
-        ssh_crn "$idx" "systemctl restart aleph-vm-supervisor.service"
+        # Polling may have started before the restart above (the node enters
+        # the registry at create-crn); do not return until the scheduler has
+        # seen this CRN healthy, or the first dispatched VM can wedge.
+        echo "    Waiting for a successful scheduler poll..."
+        if wait_for_scheduler_poll "$idx" "$restart_ts"; then
+            echo "    Scheduler sees CRN $idx as healthy."
+        else
+            echo "    WARNING: no successful scheduler poll observed within 180s." >&2
+        fi
 
         echo "    CRN $crn_name_str registered and linked."
     done

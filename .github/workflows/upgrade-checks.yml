@@ -41,7 +41,7 @@ env:
   CANDIDATE_BRANCH: "dev"
   # Scenario B (ALEPH_VM_SUPERVISOR_IMPL python<->rust swap) needs a
   # candidate deb that ships the launcher (aleph-vm PR #1024 onwards).
-  RUST_SWAP: "false"
+  RUST_SWAP: "true"
   RUST_LIFECYCLE: "false"
 
 jobs:

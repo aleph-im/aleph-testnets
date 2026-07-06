@@ -2,13 +2,10 @@ import json
 import os
 import subprocess
 import time
-import uuid
 
 import pytest
 import urllib.request
 import urllib.error
-
-from tests.vm_helpers import NODESTATUS_ADDR
 
 
 def _require_env(name: str) -> str:
@@ -46,13 +43,13 @@ def ccn_ready(ccn_url: str):
 
 
 # The testnet network name. Used as the global `--network` on every CLI call,
-# and — because the CLI derives the corechannel `--network-tag` from the current
-# network's name — as the tag embedded in node operations (link/unlink/create).
+# and, because the CLI derives the corechannel `--network-tag` from the current
+# network's name, as the tag embedded in node operations (link/unlink/create).
 # It MUST match:
 #   - `--network testnet` in scripts/crn-up.sh (which links the CRNs), and
 #   - `FILTER_TAG: testnet` on the nodestatus services (deploy/docker-compose.yml),
 # otherwise nodestatus won't process these operations and CRN (un)links are
-# silent no-ops (see test_migration).
+# silent no-ops.
 TESTNET_NETWORK = "testnet"
 
 
@@ -95,7 +92,7 @@ def aleph_cli(ccn_url: str, private_key: str, aleph_cli_config: str):
 
     Usage:
         result = aleph_cli("file", "upload", "/path/to/file")
-        result = aleph_cli("post", "list", "--channels", "test", parse_json=True)
+        result = aleph_cli("instance", "show", vm_hash, parse_json=True)
 
     With `parse_json=True`, an empty stdout (e.g. `aggregate get` on a
     missing key) yields None rather than a JSONDecodeError.
@@ -132,107 +129,6 @@ def aleph_cli(ccn_url: str, private_key: str, aleph_cli_config: str):
     return run
 
 
-@pytest.fixture
-def unique_channel() -> str:
-    """Generate a unique channel name to avoid test collisions."""
-    return f"test-{uuid.uuid4().hex[:12]}"
-
-
-@pytest.fixture
-def tmp_file(tmp_path):
-    """Create a temporary file with random content for upload tests."""
-    f = tmp_path / "testfile.bin"
-    f.write_bytes(os.urandom(1024))
-    return f
-
-
-@pytest.fixture(scope="session")
-def ccn_api(ccn_url: str):
-    """Return a function that queries the CCN REST API and returns parsed JSON."""
-    def get(path: str) -> dict:
-        url = f"{ccn_url}{path}"
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        resp = urllib.request.urlopen(req, timeout=10)
-        return json.loads(resp.read())
-    return get
-
-
-@pytest.fixture(scope="session")
-def ccn_messages(ccn_url: str):
-    """Return a function that queries the CCN messages API."""
-    def query(params: dict) -> list:
-        qs = "&".join(f"{k}={v}" for k, v in params.items())
-        url = f"{ccn_url}/api/v0/messages.json?{qs}"
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        resp = urllib.request.urlopen(req, timeout=10)
-        data = json.loads(resp.read())
-        return data.get("messages", [])
-    return query
-
-
-@pytest.fixture(scope="session")
-def ccn_aggregates(aleph_cli):
-    """Return a function that fetches an aggregate value via `aleph aggregate get`.
-
-    Returns the unwrapped value at `key` (matching the urllib-based fixture's
-    contract). The CLI emits `{"<key>": <value>}` — we drop the wrapping.
-    Returns None if the aggregate does not exist (the CLI exits 0 with empty
-    stdout in that case).
-    """
-    def get(address: str, key: str) -> dict | None:
-        raw = aleph_cli("aggregate", "get", key, "--address", address, parse_json=True)
-        if not isinstance(raw, dict):
-            return None
-        return raw.get(key)
-    return get
-
-
-@pytest.fixture(scope="session")
-def contracts():
-    """Load deployed contract addresses from .local/contracts.json."""
-    path = os.environ.get("ALEPH_TESTNET_CONTRACTS_JSON", "")
-    if not path or not os.path.exists(path):
-        pytest.skip("No contracts.json — credits tests require deployed contracts")
-    with open(path) as f:
-        return json.load(f)
-
-
-@pytest.fixture(scope="session")
-def mock_aleph_addr(contracts):
-    """MockALEPH contract address on Anvil."""
-    return contracts["mock_aleph"]
-
-
-@pytest.fixture(scope="session")
-def mint_aleph(mock_aleph_addr, cast_send):
-    """Return a function that mints MockALEPH to an address.
-
-    Amount is in whole ALEPH tokens (e.g. 1000000 = 1M ALEPH).
-    MockALEPH has 18 decimals.
-    """
-    deployer_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-
-    def mint(to: str, amount: int):
-        raw = str(amount * 10**18)
-        cast_send(
-            mock_aleph_addr,
-            "mint(address,uint256)",
-            to, raw,
-            private_key=deployer_key,
-        )
-    return mint
-
-
-@pytest.fixture(scope="session")
-def indexer_url() -> str:
-    return os.environ.get("ALEPH_TESTNET_INDEXER_URL", "http://localhost:8081")
-
-
-@pytest.fixture(scope="session")
-def anvil_rpc() -> str:
-    return os.environ.get("ALEPH_TESTNET_ANVIL_RPC", "http://localhost:8545")
-
-
 @pytest.fixture(scope="session")
 def scheduler_api_url() -> str:
     return os.environ.get("ALEPH_TESTNET_SCHEDULER_API_URL", "http://localhost:8082")
@@ -242,105 +138,16 @@ def scheduler_api_url() -> str:
 def rootfs_image() -> str:
     path = os.environ.get("ALEPH_TESTNET_ROOTFS", "")
     if not path or not os.path.exists(path):
-        pytest.skip("No rootfs image — instance tests require ALEPH_TESTNET_ROOTFS")
+        pytest.skip("No rootfs image: instance tests require ALEPH_TESTNET_ROOTFS")
     return path
-
-
-@pytest.fixture(scope="session")
-def rootfs_hash(aleph_cli, rootfs_image) -> str:
-    """Upload the rootfs image once per session; return its item_hash.
-
-    Instance tests reuse this instead of each re-uploading the multi-hundred-MB
-    image. Under xdist each worker has its own session, so the upload happens
-    once per worker (idempotent — content-addressed).
-    """
-    result = aleph_cli(
-        "file", "upload", rootfs_image,
-        "--storage-engine", "storage", "--chain", "eth",
-        parse_json=True,
-    )
-    item_hash = result["item_hash"]
-    assert item_hash, "Upload should return an item_hash"
-    return item_hash
-
-
-@pytest.fixture(scope="session")
-def program_runtime() -> str:
-    path = os.environ.get("ALEPH_TESTNET_PROGRAM_RUNTIME", "")
-    if not path or not os.path.exists(path):
-        pytest.skip("No program runtime — program tests require ALEPH_TESTNET_PROGRAM_RUNTIME")
-    return path
-
-
-@pytest.fixture(scope="session")
-def program_runtime_hash(aleph_cli, program_runtime) -> str:
-    """Upload the runtime squashfs once per session; return its item_hash.
-
-    Must be referenced explicitly at `program create` time: the CLI's default
-    runtime resolution reads the `vm-images` aggregate, which does not exist
-    on a fresh testnet CCN, and the CRN downloads the runtime by this hash."""
-    return _upload_with_balance_retry(aleph_cli, program_runtime, "Program runtime")
-
-
-@pytest.fixture(scope="session")
-def crn_url(aleph_cli) -> str:
-    """Corechannel-registered API URL of the first CRN (e.g. http://1.2.3.4:4020).
-
-    Programs run on-demand on whichever CRN receives the HTTP call — no
-    scheduler placement to resolve, so any registered CRN will do. (The
-    `crn_nodes` fixture instead demands >=2 nodes, for migration tests.)"""
-    nodes = aleph_cli(
-        "node", "list",
-        "--type", "crn",
-        "--all",
-        "--corechannel-address", NODESTATUS_ADDR,
-        parse_json=True,
-    )
-    if not nodes:
-        pytest.skip("No CRNs registered — program tests require a registered CRN")
-    return nodes[0]["address"].rstrip("/")
-
-
-@pytest.fixture(scope="session")
-def confidential_rootfs() -> str:
-    path = os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_ROOTFS", "")
-    if not path or not os.path.exists(path):
-        pytest.skip("No confidential rootfs — requires ALEPH_TESTNET_CONFIDENTIAL_ROOTFS")
-    return path
-
-
-@pytest.fixture(scope="session")
-def confidential_firmware() -> str:
-    path = os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_FIRMWARE", "")
-    if not path or not os.path.exists(path):
-        pytest.skip("No confidential firmware — requires ALEPH_TESTNET_CONFIDENTIAL_FIRMWARE")
-    return path
-
-
-@pytest.fixture(scope="session")
-def confidential_crn_host() -> str:
-    """Address of the static TEE server (the only confidential-capable CRN)."""
-    host = os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST", "")
-    if not host:
-        pytest.skip("No TEE server — requires ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST")
-    return host
-
-
-@pytest.fixture(scope="session")
-def confidential_password() -> str:
-    """Disk-decryption password baked into the encrypted rootfs by
-    scripts/confidential-artifacts.sh. A fixed, non-secret test value —
-    the default must match that script's."""
-    return os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_PASSWORD", "test-password")
 
 
 def _upload_with_balance_retry(aleph_cli, path: str, what: str, timeout: float = 180) -> str:
     """Upload a file, retrying while the CCN reports 'Insufficient balance'.
 
     On a fresh testnet the account funding flows through nodestatus-balances
-    asynchronously; an early big upload (the confidential fixtures run before
-    every other VM test, alphabetically) can race it. Real cost shortfalls
-    still surface — as a failure after the timeout."""
+    asynchronously; an early big upload can race it. Real cost shortfalls
+    still surface, as a failure after the timeout."""
     deadline = time.time() + timeout
     while True:
         result = aleph_cli(
@@ -359,19 +166,13 @@ def _upload_with_balance_retry(aleph_cli, path: str, what: str, timeout: float =
 
 
 @pytest.fixture(scope="session")
-def confidential_rootfs_hash(aleph_cli, confidential_rootfs) -> str:
-    """Upload the encrypted rootfs once per session; return its item_hash."""
-    return _upload_with_balance_retry(aleph_cli, confidential_rootfs, "Confidential rootfs")
+def rootfs_hash(aleph_cli, rootfs_image) -> str:
+    """Upload the rootfs image once per session; return its item_hash.
 
-
-@pytest.fixture(scope="session")
-def confidential_firmware_hash(aleph_cli, confidential_firmware) -> str:
-    """Upload the OVMF blob once per session; return its item_hash.
-
-    Must be referenced explicitly at create time: the CLI's default firmware
-    resolution reads the `vm-images` aggregate, which does not exist on a
-    fresh testnet CCN, and the CRN downloads the firmware by this hash."""
-    return _upload_with_balance_retry(aleph_cli, confidential_firmware, "Firmware")
+    Instance tests reuse this instead of each re-uploading the multi-hundred-MB
+    image. Retries around the funding race: this is the first big upload of a
+    run and nodestatus-balances credits the account asynchronously."""
+    return _upload_with_balance_retry(aleph_cli, rootfs_image, "Rootfs")
 
 
 @pytest.fixture(scope="session")
@@ -388,87 +189,23 @@ def ssh_key_pair(tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
-def indexer_graphql(indexer_url: str):
-    """Return a function that queries the indexer's GraphQL endpoint."""
-    def query(graphql_query: str, variables: dict | None = None) -> dict:
-        payload = json.dumps({"query": graphql_query, "variables": variables or {}})
-        req = urllib.request.Request(
-            f"{indexer_url}/graphql",
-            data=payload.encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        resp = urllib.request.urlopen(req, timeout=10)
-        return json.loads(resp.read())
-    return query
+def crn_ssh_key() -> str:
+    """SSH private key granting root access to the CRN *hosts* (not the VMs).
 
+    Reuses crn-up.sh's convention: the SSH_KEY_FILE environment variable,
+    defaulting to ~/.ssh/id_ed25519. In CI the tests run on the CCN droplet,
+    where the workflow copies the DigitalOcean key to /root/.ssh/id_ed25519
+    (the same key crn-up.sh uses to install the CRNs).
 
-@pytest.fixture(scope="session")
-def cast_send(anvil_rpc: str):
-    """Return a function that runs cast send against Anvil."""
-    def send(
-        to: str,
-        sig: str,
-        *args: str,
-        private_key: str = "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a",  # Anvil #4
-        value: str | None = None,
-    ) -> subprocess.CompletedProcess:
-        cmd = [
-            "cast", "send",
-            "--rpc-url", anvil_rpc,
-            "--private-key", private_key,
-            to, sig, *args,
-        ]
-        if value:
-            cmd.extend(["--value", value])
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            pytest.fail(
-                f"cast send failed: {' '.join(cmd)}\n"
-                f"Stdout: {result.stdout}\n"
-                f"Stderr: {result.stderr}"
-            )
-        return result
-    return send
-
-
-@pytest.fixture(scope="session")
-def cast_call(anvil_rpc: str):
-    """Return a function that runs cast call (read-only) against Anvil."""
-    def call(to: str, sig: str, *args: str) -> str:
-        cmd = [
-            "cast", "call",
-            "--rpc-url", anvil_rpc,
-            to, sig, *args,
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            pytest.fail(
-                f"cast call failed: {' '.join(cmd)}\n"
-                f"Stdout: {result.stdout}\n"
-                f"Stderr: {result.stderr}"
-            )
-        return result.stdout.strip()
-    return call
-
-
-@pytest.fixture(scope="session")
-def crn_nodes(aleph_cli):
-    """Registered CRN entries from the testnet's corechannel aggregate.
-
-    Returns a list of dicts, each with at least 'hash' and 'address' keys
-    (the `address` field is the CRN's HTTP endpoint URL). Requires CRN_COUNT=2
-    or more during provisioning.
+    The upgrade tests need this to inspect and mutate the CRN itself:
+    dpkg version checks, /etc/aleph-vm/supervisor.env edits and
+    aleph-vm-supervisor restarts.
     """
-    NODESTATUS_ADDR = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-    nodes = aleph_cli(
-        "node", "list",
-        "--type", "crn",
-        "--all",
-        "--corechannel-address", NODESTATUS_ADDR,
-        parse_json=True,
-    )
-    if not nodes:
-        pytest.skip("No CRNs registered — migration tests require registered CRNs")
-    if len(nodes) < 2:
-        pytest.skip(f"Need at least 2 CRNs for migration tests, found {len(nodes)}")
-    return nodes
+    path = os.path.expanduser(os.environ.get("SSH_KEY_FILE") or "~/.ssh/id_ed25519")
+    if not os.path.exists(path):
+        pytest.fail(
+            f"CRN host SSH key not found at {path}. The upgrade tests must run "
+            "where crn-up.sh ran (the CI droplet or the operator machine); set "
+            "SSH_KEY_FILE to the key that has root access to the CRN hosts."
+        )
+    return path

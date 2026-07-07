@@ -38,11 +38,11 @@ permissions:
 # Defaults for push-triggered runs; workflow_dispatch inputs override them.
 env:
   BASELINE_VERSION: "1.13.0"
-  CANDIDATE_BRANCH: "dev"
+  CANDIDATE_BRANCH: "od/rust-daemon-inc3"
   # Scenario B (ALEPH_VM_SUPERVISOR_IMPL python<->rust swap) needs a
   # candidate deb that ships the launcher (aleph-vm PR #1024 onwards).
   RUST_SWAP: "true"
-  RUST_LIFECYCLE: "false"
+  RUST_LIFECYCLE: "true"
 
 jobs:
   upgrade-checks:

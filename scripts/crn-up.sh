@@ -349,6 +349,13 @@ install_crn() {
     fi
 
     for idx in $(seq 0 $((CRN_COUNT - 1))); do
+        # CRN_ONLY_INDEX scopes --install to a single CRN, leaving the others
+        # untouched. The upgrade-checks workflow uses it to install the CANDIDATE
+        # branch deb on just the static SNP (TEE) CRN, without re-touching the
+        # DO CRNs that already carry their baseline release.
+        if [ -n "${CRN_ONLY_INDEX:-}" ] && [ "$idx" != "$CRN_ONLY_INDEX" ]; then
+            continue
+        fi
         local ip
         ip=$(crn_ip "$idx")
         echo ""

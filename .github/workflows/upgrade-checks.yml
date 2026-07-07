@@ -21,7 +21,7 @@ on:
       candidate_branch:
         description: "aleph-vm branch whose CI deb the CRN is upgraded to"
         type: string
-        default: "dev"
+        default: "od/phase3-d1-snp-arch-agnostic"
       rust_swap:
         description: "Run scenario B (ALEPH_VM_SUPERVISOR_IMPL python<->rust swap; needs Rust daemon increment 2+)"
         type: boolean
@@ -38,7 +38,8 @@ permissions:
 # Defaults for push-triggered runs; workflow_dispatch inputs override them.
 env:
   BASELINE_VERSION: "1.13.0"
-  CANDIDATE_BRANCH: "dev"
+  # Phase 3 stack (Rust supervisor + SEV-SNP + attest-cli) lives on this branch.
+  CANDIDATE_BRANCH: "od/phase3-d1-snp-arch-agnostic"
   # Scenario B (ALEPH_VM_SUPERVISOR_IMPL python<->rust swap) needs a
   # candidate deb that ships the launcher (aleph-vm PR #1024 onwards).
   RUST_SWAP: "true"
@@ -49,11 +50,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: digitalocean
+    # Serialize on the shared AMD SEV-SNP box, exactly like main's pr-tests.yml:
+    # the static TEE server hosts one CI run at a time. This also serializes
+    # upgrade-checks runs against each other (they share the group). When
+    # AMD_SEV_SNP_HOST is unset the SNP steps skip but the group still queues
+    # this run behind any pr-tests run — a harmless over-serialization we accept
+    # so the two workflows can never collide on the box. (Was: group
+    # upgrade-checks; widened for the additive SNP scenario.)
     concurrency:
-      group: upgrade-checks
+      group: amd-sev-snp-server
       cancel-in-progress: false
     env:
-      # A single CRN is enough: both scenarios run on one node.
+      # DigitalOcean CRN droplets to provision. The SNP (TEE) CRN is the static
+      # server at index ${CRN_COUNT} (= DO_CRN_COUNT), added on top when
+      # configured; it is NOT provisioned/destroyed here.
       CRN_COUNT: 1
 
     steps:
@@ -87,6 +97,25 @@ jobs:
               ControlPersist 10m
           EOF
           chmod 0600 ~/.ssh/config
+
+      - name: Determine SNP configuration
+        id: snp
+        # Secrets cannot be referenced directly in step `if:` conditions, so map
+        # the presence of AMD_SEV_SNP_HOST to an output here and gate every SNP
+        # step on it. Absent secret => the whole SNP scenario is skipped and a
+        # plain upgrade-check run is unaffected.
+        env:
+          AMD_SEV_SNP_HOST: ${{ secrets.AMD_SEV_SNP_HOST }}
+        run: |
+          if [ -n "$AMD_SEV_SNP_HOST" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            # The static TEE CRN sits at index ${CRN_COUNT} (one past the DO CRNs).
+            echo "TEE_IDX=${CRN_COUNT}" >> "$GITHUB_ENV"
+            echo "SNP configured: TEE CRN at index ${CRN_COUNT}"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "SNP not configured (AMD_SEV_SNP_HOST unset); SNP scenario will skip."
+          fi
 
       - name: Create CCN and CRN Droplets
         run: |
@@ -161,6 +190,10 @@ jobs:
               sleep 3
             done
           done
+          # Static SNP (TEE) server: already running, just trust its key.
+          if [ "${{ steps.snp.outputs.configured }}" = "true" ]; then
+            ssh-keyscan -H "${{ secrets.AMD_SEV_SNP_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          fi
 
       - name: Install system dependencies (CCN + CRN in parallel)
         run: |
@@ -270,6 +303,97 @@ jobs:
             CRN_COUNT=${CRN_COUNT} \
             bash scripts/crn-up.sh --register"
 
+      # ── SEV-SNP scenario (additive; skips cleanly when unconfigured) ────────
+      - name: Register static SNP (TEE) CRN and install the candidate deb
+        if: steps.snp.outputs.configured == 'true'
+        run: |
+          # Static TEE server as CRN index ${TEE_IDX} (mirrors main's
+          # pr-tests.yml): static = don't provision/destroy/upgrade;
+          # confidential = enable AMD SEV in supervisor.env; ssh-user = non-root
+          # login support. Markers are written from the CCN droplet, so the
+          # secrets never touch this runner's disk beyond this SSH payload.
+          TEE_IDX="${TEE_IDX}"
+          ssh root@${DROPLET_IPV4} "mkdir -p /opt/aleph-testnets/.local/crn/${TEE_IDX}"
+          ssh root@${DROPLET_IPV4} "echo 'amd-sev-snp-server' > /opt/aleph-testnets/.local/crn/${TEE_IDX}/droplet-name"
+          ssh root@${DROPLET_IPV4} "echo '${{ secrets.AMD_SEV_SNP_HOST }}' > /opt/aleph-testnets/.local/crn/${TEE_IDX}/droplet-ip"
+          ssh root@${DROPLET_IPV4} "echo '${{ secrets.AMD_SEV_SNP_USER }}' > /opt/aleph-testnets/.local/crn/${TEE_IDX}/ssh-user"
+          ssh root@${DROPLET_IPV4} "touch /opt/aleph-testnets/.local/crn/${TEE_IDX}/static /opt/aleph-testnets/.local/crn/${TEE_IDX}/confidential"
+
+          # Install the CANDIDATE branch deb on JUST the TEE CRN (CRN_ONLY_INDEX):
+          # it must carry the Rust supervisor + SEV-SNP + attest-cli, unlike the
+          # DO CRNs which run the baseline release until scenario A upgrades them.
+          # CRN_COUNT is widened to include the TEE index so the install loop
+          # reaches it; CRN_ONLY_INDEX skips the DO CRNs.
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
+            CCN_URL=http://${DROPLET_IPV4}:4024 \
+            SSH_KEY_FILE=/root/.ssh/id_ed25519 \
+            CRN_COUNT=$((TEE_IDX + 1)) \
+            CRN_ONLY_INDEX=${TEE_IDX} \
+            GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            ALEPH_VM_BRANCH='${{ inputs.candidate_branch || env.CANDIDATE_BRANCH }}' \
+            bash scripts/crn-up.sh --install"
+
+      - name: Checkout candidate aleph-vm (for the measured image + attest CLI)
+        if: steps.snp.outputs.configured == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: aleph-im/aleph-vm
+          ref: ${{ inputs.candidate_branch || env.CANDIDATE_BRANCH }}
+          path: aleph-vm-src
+
+      - name: Install Nix
+        if: steps.snp.outputs.configured == 'true'
+        # ASSUMPTION: nix-in-CI is feasible here. The measured image build pulls
+        # a lot (OVMF, kernel, sev-snp-measure); if this proves too slow/flaky on
+        # the GH runner, move the nix build to the SNP host (which has the AMD
+        # toolchain) and have snp-artifacts.sh build there instead.
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Build measured image + attest-cli, stage SNP artifacts
+        if: steps.snp.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          SRC="$PWD/aleph-vm-src"
+
+          # 1. Measured image via the nix flake `image` output. The flake is at
+          #    nix/ but references ../rust, so the repo root is the flake source
+          #    and dir=nix selects it. git+file only sees tracked files, which a
+          #    clean checkout provides.
+          nix build "git+file://$SRC?dir=nix#image" \
+            --extra-experimental-features "nix-command flakes" \
+            -o image-result
+
+          # 2. attest-cli via cargo (the flake exposes attest-agent, not the CLI).
+          #    ASSUMPTION A1 (snp-artifacts.sh): this ubuntu-latest-built binary
+          #    must exec on the SNP host; a glibc mismatch means building it on
+          #    the SNP host instead.
+          if ! command -v cargo >/dev/null; then
+            curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+            . "$HOME/.cargo/env"
+          fi
+          # cd into rust/: its rust-toolchain.toml makes rustup fetch the pinned
+          # toolchain on the first cargo invocation.
+          ( cd "$SRC/rust" && cargo build --release -p aleph-attest-cli )
+
+          # 3. Stage into .local/snp so snp-artifacts.sh (on the CCN) can
+          #    distribute + record.
+          mkdir -p .local/snp/image .local/snp/bin
+          cp -rL image-result/* .local/snp/image/
+          chmod -R u+rw .local/snp/image
+          cp "$SRC/rust/target/release/aleph-attest-cli" .local/snp/bin/aleph-attest-cli
+          chmod +x .local/snp/bin/aleph-attest-cli
+          echo "Measured image measurement: $(cat .local/snp/image/measurement.hex)"
+
+          # 4. Ship the staged artifacts to the CCN droplet, then run
+          #    snp-artifacts.sh there to push them to the SNP host + record the
+          #    measurement the test reads.
+          rsync -az -e ssh .local/snp/ root@${DROPLET_IPV4}:/opt/aleph-testnets/.local/snp/
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
+            SNP_HOST='${{ secrets.AMD_SEV_SNP_HOST }}' \
+            SNP_USER='${{ secrets.AMD_SEV_SNP_USER }}' \
+            SSH_KEY_FILE=/root/.ssh/id_ed25519 \
+            bash scripts/snp-artifacts.sh"
+
       - name: Run upgrade checks
         run: |
           # GH_TOKEN: the tests call crn-up.sh --upgrade, which downloads the
@@ -312,6 +436,24 @@ jobs:
             fi
           done
 
+      - name: Collect SNP (TEE) server logs
+        if: always() && steps.snp.outputs.configured == 'true'
+        run: |
+          TEE_HOST="${{ secrets.AMD_SEV_SNP_HOST }}"
+          TEE_USER="${{ secrets.AMD_SEV_SNP_USER }}"
+          # -n 5000 for the supervisor's settings dump; the controller units carry
+          # each SNP guest's qemu serial console (essential when a guest never
+          # reaches the attest-agent on 8443).
+          if [ "$TEE_USER" = "root" ]; then
+            ssh "root@$TEE_HOST" "journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
+            ssh "root@$TEE_HOST" "journalctl -u 'aleph-vm-controller@*' --no-pager -n 3000" > tee-controllers.txt 2>&1 || true
+            ssh "root@$TEE_HOST" "cat /etc/aleph-vm/supervisor.env" > tee-supervisor-env.txt 2>&1 || true
+          else
+            ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
+            ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u 'aleph-vm-controller@*' --no-pager -n 3000" > tee-controllers.txt 2>&1 || true
+            ssh "$TEE_USER@$TEE_HOST" "sudo -n cat /etc/aleph-vm/supervisor.env" > tee-supervisor-env.txt 2>&1 || true
+          fi
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -325,6 +467,16 @@ jobs:
             crn*-controllers.txt
             crn*-vm-connector.txt
             crn*-supervisor-env.txt
+            tee-supervisor.txt
+            tee-controllers.txt
+            tee-supervisor-env.txt
+
+      - name: Reset SNP (TEE) server
+        if: always() && steps.snp.outputs.configured == 'true'
+        run: |
+          # Stop the supervisor, kill leftover QEMU, wipe execution state so this
+          # run's SNP VM can't leak into the next. Idempotent.
+          bash scripts/tee-reset.sh "${{ secrets.AMD_SEV_SNP_HOST }}" "${{ secrets.AMD_SEV_SNP_USER }}" ~/.ssh/id_ed25519 || true
 
       - name: Destroy CRN Droplets
         if: always()

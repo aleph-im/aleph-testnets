@@ -261,6 +261,18 @@ run_tests() {
         fi
     done
     export ALEPH_TESTNET_CONFIDENTIAL_PASSWORD="${ALEPH_TESTNET_CONFIDENTIAL_PASSWORD:-test-password}"
+
+    # SEV-SNP measured-boot test artifacts (present only when CI prepared them
+    # via scripts/snp-artifacts.sh; tests/test_vm_snp.py skips when the
+    # measurement is unset). The SNP host reuses the confidential-CRN-host
+    # resolution above (ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST) — the static SNP
+    # server carries the `confidential` marker.
+    if [ -f "$LOCAL_DIR/snp/measurement" ]; then
+        export ALEPH_TESTNET_SNP_MEASUREMENT="$(cat "$LOCAL_DIR/snp/measurement")"
+    fi
+    export ALEPH_TESTNET_SNP_IMAGE_HOST_DIR="${ALEPH_TESTNET_SNP_IMAGE_HOST_DIR:-/opt/aleph-snp-image}"
+    export ALEPH_TESTNET_SNP_AMD_PRODUCT="${ALEPH_TESTNET_SNP_AMD_PRODUCT:-Genoa}"
+
     cd "$REPO_ROOT"
     pytest -v --junitxml=results.xml "$@"
 }

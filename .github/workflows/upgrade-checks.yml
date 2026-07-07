@@ -363,24 +363,19 @@ jobs:
             --extra-experimental-features "nix-command flakes" \
             -o image-result
 
-          # 2. attest-cli via cargo (the flake exposes attest-agent, not the CLI).
-          #    ASSUMPTION A1 (snp-artifacts.sh): this ubuntu-latest-built binary
-          #    must exec on the SNP host; a glibc mismatch means building it on
-          #    the SNP host instead.
-          if ! command -v cargo >/dev/null; then
-            curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain none
-            . "$HOME/.cargo/env"
-          fi
-          # cd into rust/: its rust-toolchain.toml makes rustup fetch the pinned
-          # toolchain on the first cargo invocation.
-          ( cd "$SRC/rust" && cargo build --release -p aleph-attest-cli )
+          # 2. attest-cli via the nix flake `attest-cli` output: a static-musl
+          #    binary (static openssl for the aleph-tee KDS chain) so it runs on
+          #    the SNP host regardless of its glibc/distro. Runs ON the SNP host.
+          nix build "git+file://$SRC?dir=nix#attest-cli" \
+            --extra-experimental-features "nix-command flakes" \
+            -o attest-cli-result
 
           # 3. Stage into .local/snp so snp-artifacts.sh (on the CCN) can
           #    distribute + record.
           mkdir -p .local/snp/image .local/snp/bin
           cp -rL image-result/* .local/snp/image/
           chmod -R u+rw .local/snp/image
-          cp "$SRC/rust/target/release/aleph-attest-cli" .local/snp/bin/aleph-attest-cli
+          cp -L attest-cli-result/bin/aleph-attest-cli .local/snp/bin/aleph-attest-cli
           chmod +x .local/snp/bin/aleph-attest-cli
           echo "Measured image measurement: $(cat .local/snp/image/measurement.hex)"
 

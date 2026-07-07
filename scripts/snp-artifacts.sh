@@ -88,13 +88,16 @@ CLI_STAGED="$SNP_STAGE_DIR/bin/aleph-attest-cli"
 # pointed us at a candidate checkout. Kept deliberately simple; the CI path is
 # RECEIVE.
 if [ ! -x "$CLI_STAGED" ] && [ -n "$ALEPH_VM_SRC" ]; then
-    if command -v cargo >/dev/null; then
-        echo "==> Building aleph-attest-cli with cargo from $ALEPH_VM_SRC/rust ..."
-        ( cd "$ALEPH_VM_SRC/rust" && cargo build --release -p aleph-attest-cli )
+    if command -v nix >/dev/null; then
+        echo "==> Building aleph-attest-cli (static musl) via nix from $ALEPH_VM_SRC (dir=nix#attest-cli) ..."
+        nix build "git+file://$ALEPH_VM_SRC?dir=nix#attest-cli" \
+            --extra-experimental-features "nix-command flakes" \
+            -o "$SNP_STAGE_DIR/attest-cli-result"
         mkdir -p "$SNP_STAGE_DIR/bin"
-        cp "$ALEPH_VM_SRC/rust/target/release/aleph-attest-cli" "$CLI_STAGED"
+        cp -L "$SNP_STAGE_DIR/attest-cli-result/bin/aleph-attest-cli" "$CLI_STAGED"
+        chmod u+rw "$CLI_STAGED"
     else
-        echo "ERROR: cargo not found and no staged aleph-attest-cli at $CLI_STAGED" >&2
+        echo "ERROR: nix not found and no staged aleph-attest-cli at $CLI_STAGED" >&2
         exit 1
     fi
 fi

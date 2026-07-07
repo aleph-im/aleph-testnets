@@ -128,31 +128,38 @@ fetch_vm_deb_from_branch() {
 
     echo "==> Fetching .deb artifact for branch '$branch' from CI..."
 
-    local run_id
-    run_id=$(gh run list \
+    # Select the latest run that actually produced the .deb artifact. We do NOT
+    # require the whole run to be "success": the package is built by the
+    # build_deb job, and a downstream e2e-integration job failing (a historically
+    # flaky DO-droplet suite) must not hide a perfectly good deb. Try the most
+    # recent runs in order and take the first that has the artifact.
+    local tmp_dir run_id downloaded=""
+    tmp_dir=$(mktemp -d)
+    for run_id in $(gh run list \
         --repo "$repo" \
         --branch "$branch" \
         --workflow "$workflow" \
-        --status success \
-        --limit 1 \
+        --limit 10 \
         --json databaseId \
-        -q '.[0].databaseId')
+        -q '.[].databaseId'); do
+        echo "    Trying CI run https://github.com/$repo/actions/runs/$run_id ..."
+        if gh run download "$run_id" \
+            --repo "$repo" \
+            --name "$artifact_name" \
+            --dir "$tmp_dir" 2>/dev/null; then
+            downloaded="$run_id"
+            break
+        fi
+    done
 
-    if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
-        echo "ERROR: No successful CI run found for branch '$branch' in $repo" >&2
-        echo "       Make sure the branch has a passing CI run (push to main or open PR)." >&2
+    if [ -z "$downloaded" ]; then
+        echo "ERROR: No CI run for branch '$branch' produced $artifact_name (last 10 runs)." >&2
+        echo "       Ensure the build-deb workflow's 'Build debian-12 Package' job succeeded." >&2
+        rm -rf "$tmp_dir"
         return 1
     fi
 
-    echo "    Found CI run: https://github.com/$repo/actions/runs/$run_id"
-
-    local tmp_dir
-    tmp_dir=$(mktemp -d)
-    gh run download "$run_id" \
-        --repo "$repo" \
-        --name "$artifact_name" \
-        --dir "$tmp_dir"
-
+    echo "    Using deb from run https://github.com/$repo/actions/runs/$downloaded"
     mv "$tmp_dir/$artifact_name" "$dest"
     rm -rf "$tmp_dir"
     echo "    Downloaded $dest"

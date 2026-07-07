@@ -116,6 +116,20 @@ def _set_supervisor_impl(crn_ssh_key, host, impl):
     _crn_run(crn_ssh_key, host, "systemctl start aleph-vm-supervisor.service")
     _wait_supervisor_active(crn_ssh_key, host, context=f"impl={impl}")
 
+    # Unit "active" means the process spawned, not that the daemon bound its
+    # socket: the agent proxies lifecycle calls to the supervisor socket and
+    # answers 500 "connect: No such file or directory" in the gap (run
+    # 28833719415 lost its final stop to that window). Do not return until a
+    # supervisor-backed agent request round-trips.
+    def fetch():
+        out = _crn_run(
+            crn_ssh_key, host,
+            "curl -sf -o /dev/null http://localhost:4020/about/executions/list && echo ok || true",
+        ).strip()
+        return out if out == "ok" else None
+
+    poll(f"supervisor serving through the agent (impl={impl})", fetch, timeout=60)
+
 
 def _assert_supervisor_impl(crn_ssh_key, host, impl):
     exe = _supervisor_exe(crn_ssh_key, host)

@@ -59,10 +59,11 @@ jobs:
   # is simply ignored when the SNP scenario is not configured.
   build-image:
     runs-on: ubuntu-latest
-    # Cold build compiles the musl cross toolchain (~60 min); leave generous
-    # headroom above the 90-minute upgrade-checks budget. Warm (cache-hit) runs
-    # finish in minutes.
-    timeout-minutes: 150
+    # Cold build compiles the musl cross toolchain from source (not in the
+    # binary cache); observed ~2.5h on a GH runner. Give it 4h so a cold build
+    # never gets cancelled. An exact primary-key cache hit (same candidate branch
+    # + flake.lock) restores the full store and finishes in minutes.
+    timeout-minutes: 240
     steps:
       - name: Checkout candidate aleph-vm
         uses: actions/checkout@v4

@@ -46,69 +46,43 @@ env:
   RUST_LIFECYCLE: "true"
 
 jobs:
-  # Build the measured SEV-SNP image + attest-cli ONCE, off the critical path of
-  # the serialized SNP host. This job carries NO amd-sev-snp-server concurrency,
-  # so its ~60-minute cold nix build (compiling the musl cross-GCC toolchain,
-  # not in the binary cache) never holds the TEE box. The toolchain + image are a
-  # pure function of the candidate aleph-vm branch, so they are cached in the GH
-  # Actions nix store cache and rebuilt only when nix/flake.lock changes. The
-  # result is uploaded as the `snp-image` artifact and consumed by upgrade-checks.
-  # Runs unconditionally (even on no-SNP runs): gating it on the SNP secret would
-  # skip it, which would in turn skip upgrade-checks (needs: build-image); a
-  # wasted image build without an SNP host is rare and acceptable, and its output
+  # Fetch the measured SEV-SNP image + attest-cli, pinned on Aleph mainnet.
+  # They are built ONCE locally (deterministic: fixed mkfs/verity seeds) and
+  # uploaded to Aleph native storage, which is content-addressed, so CI fetches
+  # them in seconds instead of compiling the musl cross-GCC toolchain + a custom
+  # kernel from source (~2.5h; not substitutable from cache.nixos.org, and the
+  # GH nix store cache does not survive the multi-user daemon's fresh path DB).
+  # The pinned content is immutable, so the launch measurement baked into the
+  # tarball stays deterministic. To refresh after an image change (an agent /
+  # aleph-tee / nix change; daemon-side fixes like DHCP do NOT change it):
+  # rebuild locally, `aleph file upload`, and bump SNP_IMAGE_HASH below.
+  # Runs unconditionally (even on no-SNP runs): gating on the SNP secret would
+  # skip this and cascade-skip upgrade-checks (needs: build-image); the artifact
   # is simply ignored when the SNP scenario is not configured.
   build-image:
     runs-on: ubuntu-latest
-    # Cold build compiles the musl cross toolchain from source (not in the
-    # binary cache); observed ~2.5h on a GH runner. Give it 4h so a cold build
-    # never gets cancelled. An exact primary-key cache hit (same candidate branch
-    # + flake.lock) restores the full store and finishes in minutes.
-    timeout-minutes: 240
+    timeout-minutes: 15
+    env:
+      # Aleph native-storage file hash (= sha256) of the image+attest-cli
+      # tarball. STORE message 04d5e619074a4c8952131249d59e2d9d10ef43271c3a87fdf0a3a1172d170521;
+      # image measurement dbf8f4ca... (D2, EPYC-v4, 2 vCPU). Immutable.
+      SNP_IMAGE_HASH: efe1ebca2db86fd90235515b1d3d702751f85961531ce9e580ddfa331ad147f8
+      SNP_IMAGE_GATEWAY: https://official.aleph.cloud
     steps:
-      - name: Checkout candidate aleph-vm
-        uses: actions/checkout@v4
-        with:
-          repository: aleph-im/aleph-vm
-          ref: ${{ inputs.candidate_branch || env.CANDIDATE_BRANCH }}
-          path: aleph-vm
-
-      - name: Install Nix
-        # cachix/install-nix-action enables flakes + cache.nixos.org out of the box.
-        uses: cachix/install-nix-action@v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - name: Cache Nix store
-        # Persist the musl cross-GCC toolchain + built derivations across runs.
-        # Key on the candidate branch + a hash of the flake lock so the cache
-        # restores whenever the flake inputs are unchanged (the common case while
-        # iterating the harness). restore-prefixes-first-match lets a near-miss
-        # (same branch, changed lock) still prime most store paths.
-        uses: nix-community/cache-nix-action@v6
-        with:
-          primary-key: nix-${{ runner.os }}-${{ inputs.candidate_branch || env.CANDIDATE_BRANCH }}-${{ hashFiles('aleph-vm/nix/flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          # Trim the saved store to stay under the GH Actions 10 GB cache ceiling.
-          gc-max-store-size-linux: 8G
-
-      - name: Build measured image + attest-cli, stage SNP artifacts
+      - name: Fetch measured image + attest-cli from Aleph
         run: |
           set -euo pipefail
-          # The flake is at aleph-vm/nix but references ../rust, so the repo root
-          # is the flake source and dir=nix selects the sub-flake. git+file only
-          # sees tracked files, which the clean actions/checkout provides.
-          nix build "git+file://$PWD/aleph-vm?dir=nix#image" -o image-result
-          # attest-cli: a static-musl binary (static openssl for the aleph-tee KDS
-          # chain) so it runs on the SNP host regardless of its glibc/distro.
-          nix build "git+file://$PWD/aleph-vm?dir=nix#attest-cli" -o attest-cli-result
-
-          # Stage into snp-artifacts/{image,bin} so the download in upgrade-checks
-          # lands exactly at .local/snp/{image,bin} (what snp-artifacts.sh reads).
-          mkdir -p snp-artifacts/image snp-artifacts/bin
-          cp -rL image-result/* snp-artifacts/image/
-          chmod -R u+rw snp-artifacts/image
-          cp -L attest-cli-result/bin/aleph-attest-cli snp-artifacts/bin/aleph-attest-cli
+          url="${SNP_IMAGE_GATEWAY}/api/v0/storage/raw/${SNP_IMAGE_HASH}"
+          echo "Fetching $url"
+          curl -fsSL --retry 5 --retry-delay 10 --max-time 300 "$url" -o snp-image.tar.gz
+          echo "${SNP_IMAGE_HASH}  snp-image.tar.gz" | sha256sum -c -
+          # Tarball layout: image/ (bzImage, initrd, rootfs.ext4[.verity/.roothash],
+          # OVMF.fd, measurement.hex) + aleph-attest-cli. Stage into
+          # snp-artifacts/{image,bin} so the download in upgrade-checks lands at
+          # .local/snp/{image,bin} (what snp-artifacts.sh reads).
+          mkdir -p snp-artifacts/bin
+          tar xzf snp-image.tar.gz -C snp-artifacts
+          mv snp-artifacts/aleph-attest-cli snp-artifacts/bin/aleph-attest-cli
           chmod +x snp-artifacts/bin/aleph-attest-cli
           echo "Measured image measurement: $(cat snp-artifacts/image/measurement.hex)"
 

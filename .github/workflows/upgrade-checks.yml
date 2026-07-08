@@ -64,9 +64,10 @@ jobs:
     timeout-minutes: 15
     env:
       # Aleph native-storage file hash (= sha256) of the image+attest-cli
-      # tarball. STORE message 04d5e619074a4c8952131249d59e2d9d10ef43271c3a87fdf0a3a1172d170521;
-      # image measurement dbf8f4ca... (D2, EPYC-v4, 2 vCPU). Immutable.
-      SNP_IMAGE_HASH: efe1ebca2db86fd90235515b1d3d702751f85961531ce9e580ddfa331ad147f8
+      # tarball. STORE message 87287e4a5c8d7554a50f982cd681b64b2600c0bbb1c0b1e618465e022e01b977;
+      # image measurement de933c37... (D4 tip: D2 DHCP + D3 chroot DNS/secrets
+      # + D4 shellcheck directives; EPYC-v4, 2 vCPU). Immutable.
+      SNP_IMAGE_HASH: 1db0d69c96dc7ed6c8a6cbb8c63f8de516ef4ed668e95c468cc216e4c44d911b
       SNP_IMAGE_GATEWAY: https://official.aleph.cloud
     steps:
       - name: Fetch measured image + attest-cli from Aleph

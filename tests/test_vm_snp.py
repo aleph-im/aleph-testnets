@@ -27,6 +27,7 @@ See the ASSUMPTIONS block at the bottom: several details here (guest DHCP IP,
 guesses to confirm against real hardware.
 """
 import os
+import shlex
 import subprocess
 import time
 import uuid
@@ -43,6 +44,12 @@ from tests.vm_helpers import poll
 # exports ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST from the CRN state dir carrying
 # the `confidential` marker, which for this workflow is the static SNP server.
 SNP_HOST = os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST", "")
+
+# SSH user on the SNP host. The static SNP server disallows root SSH login (only
+# AMD_SEV_SNP_USER), so we connect as that user and elevate with `sudo -n` for
+# every remote command, exactly like scripts/snp-artifacts.sh's snp_ssh. Default
+# root for hosts that do allow it. See ASSUMPTIONS A2.
+SNP_USER = os.environ.get("ALEPH_TESTNET_SNP_USER", "root")
 
 # 48-byte SHA-384 launch measurement (hex), written by snp-artifacts.sh from the
 # nix `measurement` output. The client pins this; a guest running anything else
@@ -99,12 +106,20 @@ def _ssh_cmd(key, host):
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
         "-o", "ConnectTimeout=10",
-        f"root@{host}",
+        f"{SNP_USER}@{host}",
     ]
 
 
 def _snp_run(key, host, command, *, timeout=120, stdin=None):
-    """Run a command on the SNP host; return CompletedProcess (no auto-fail)."""
+    """Run a command on the SNP host; return CompletedProcess (no auto-fail).
+
+    For a non-root SNP_USER the command is elevated with `sudo -n` (the SNP host
+    forbids root SSH; every operation here needs root: systemctl, editing
+    supervisor.env, the root-owned gRPC socket). stdin is piped through to the
+    elevated command (e.g. `cat >` in _snp_put, or python reading a heredoc).
+    """
+    if SNP_USER != "root":
+        command = "sudo -n bash -c " + shlex.quote(command)
     return subprocess.run(
         _ssh_cmd(key, host) + [command],
         input=stdin, capture_output=True, text=True, timeout=timeout,

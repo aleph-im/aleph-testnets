@@ -257,6 +257,12 @@ run_tests() {
     for crn_state_dir in "$LOCAL_DIR"/crn/*/; do
         if [ -f "$crn_state_dir/confidential" ] && [ -f "$crn_state_dir/droplet-ip" ]; then
             export ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST="$(cat "$crn_state_dir/droplet-ip")"
+            # SNP host SSH user: root login is disabled on the static SNP server,
+            # so tests/test_vm_snp.py connects as this user and elevates with
+            # sudo. The workflow wrote it next to droplet-ip; default root.
+            if [ -f "$crn_state_dir/ssh-user" ]; then
+                export ALEPH_TESTNET_SNP_USER="$(cat "$crn_state_dir/ssh-user")"
+            fi
             break
         fi
     done

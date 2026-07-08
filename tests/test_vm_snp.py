@@ -240,7 +240,9 @@ spec = CreateVmSpec(
     network=NetworkConfig(internet_access=True, requested_ipv6="", ipv6_prefix_len=0),
     gpus=[],
     numa_node=None,
-    persistent=False,
+    # QEMU instances start under systemd only; the daemon rejects a
+    # non-persistent QEMU VM ("AlephQemuInstance starts under systemd only").
+    persistent=True,
     hostname="snp-attest",
 )
 

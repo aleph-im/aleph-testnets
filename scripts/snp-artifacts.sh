@@ -53,6 +53,11 @@
 #                         artifacts are absent
 set -euo pipefail
 
+# Fail loudly: a silently-failed scp/mv/sudo must abort here (making the CI
+# "Stage SNP artifacts" step red at the real error) rather than print a success
+# summary and let the test fail later with "artifacts missing on the host".
+set -euo pipefail
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN_DIR="$REPO_ROOT/bin"
 
@@ -151,6 +156,8 @@ echo "==> Copying aleph-attest-cli to the SNP host ($SNP_HOST:$SNP_IMAGE_HOST_DI
 snp_ssh "mkdir -p '$SNP_IMAGE_HOST_DIR'"
 scp "${SSH_OPTS[@]}" "$CLI_STAGED" "$SNP_USER@$SNP_HOST:/tmp/aleph-attest-cli"
 snp_ssh "mv /tmp/aleph-attest-cli '$SNP_IMAGE_HOST_DIR/aleph-attest-cli' && chmod +x '$SNP_IMAGE_HOST_DIR/aleph-attest-cli'"
+snp_ssh "test -x '$SNP_IMAGE_HOST_DIR/aleph-attest-cli'" \
+    || { echo "ERROR: aleph-attest-cli not present/exec at $SNP_IMAGE_HOST_DIR on $SNP_HOST after upload" >&2; exit 1; }
 
 # --- 2. Measurement: record where the test reads it --------------------------
 measurement="$(tr -d '[:space:]' < "$IMAGE_DIR/measurement.hex")"
@@ -169,6 +176,15 @@ else
     for f in bzImage initrd rootfs.ext4 rootfs.ext4.verity rootfs.ext4.roothash OVMF.fd measurement.hex; do
         scp "${SSH_OPTS[@]}" "$IMAGE_DIR/$f" "$SNP_USER@$SNP_HOST:/tmp/$f"
         snp_ssh "mv /tmp/$f '$SNP_IMAGE_HOST_DIR/$f'"
+    done
+    # Verify every file actually landed BEFORE recording the cache marker: a
+    # partial/failed upload must not poison the measurement cache (the marker
+    # would make later runs skip the upload against an incomplete image).
+    echo "==> Verifying staged image on the SNP host:"
+    snp_ssh "ls -la '$SNP_IMAGE_HOST_DIR'"
+    for f in bzImage initrd rootfs.ext4 rootfs.ext4.verity rootfs.ext4.roothash OVMF.fd measurement.hex; do
+        snp_ssh "test -f '$SNP_IMAGE_HOST_DIR/$f'" \
+            || { echo "ERROR: $SNP_IMAGE_HOST_DIR/$f missing on $SNP_HOST after upload" >&2; exit 1; }
     done
     snp_ssh "echo '$measurement' > '$host_marker'"
 fi

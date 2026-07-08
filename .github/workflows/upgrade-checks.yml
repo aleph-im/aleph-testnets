@@ -21,7 +21,7 @@ on:
       candidate_branch:
         description: "aleph-vm branch whose CI deb the CRN is upgraded to"
         type: string
-        default: "od/phase3-d1-snp-arch-agnostic"
+        default: "od/phase3-d2-snp-dhcp"
       rust_swap:
         description: "Run scenario B (ALEPH_VM_SUPERVISOR_IMPL python<->rust swap; needs Rust daemon increment 2+)"
         type: boolean
@@ -39,7 +39,7 @@ permissions:
 env:
   BASELINE_VERSION: "1.13.0"
   # Phase 3 stack (Rust supervisor + SEV-SNP + attest-cli) lives on this branch.
-  CANDIDATE_BRANCH: "od/phase3-d1-snp-arch-agnostic"
+  CANDIDATE_BRANCH: "od/phase3-d2-snp-dhcp"
   # Scenario B (ALEPH_VM_SUPERVISOR_IMPL python<->rust swap) needs a
   # candidate deb that ships the launcher (aleph-vm PR #1024 onwards).
   RUST_SWAP: "true"
@@ -87,7 +87,7 @@ jobs:
         uses: nix-community/cache-nix-action@v6
         with:
           primary-key: nix-${{ runner.os }}-${{ inputs.candidate_branch || env.CANDIDATE_BRANCH }}-${{ hashFiles('aleph-vm/nix/flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-${{ inputs.candidate_branch || env.CANDIDATE_BRANCH }}-
+          restore-prefixes-first-match: nix-${{ runner.os }}-
           # Trim the saved store to stay under the GH Actions 10 GB cache ceiling.
           gc-max-store-size-linux: 8G
 

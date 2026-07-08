@@ -119,7 +119,10 @@ fetch_vm_deb_from_branch() {
     local dest="$2"
     local repo="aleph-im/aleph-vm"
     local workflow="build-deb-package-and-integration-tests.yml"
-    local artifact_name="aleph-vm.debian-12.deb"
+    # Distro-matched .deb: the bundled Python native extensions (grpcio/cygrpc,
+    # pydantic_core) only import on the python the deb was built for, so a
+    # non-debian-12 CRN (e.g. an ubuntu-24.04 static SNP host) needs its variant.
+    local artifact_name="aleph-vm.${ALEPH_VM_DEB_VARIANT:-debian-12}.deb"
 
     if ! command -v gh &>/dev/null; then
         echo "ERROR: gh CLI is required to download CI artifacts. Install it from https://cli.github.com/" >&2
@@ -334,18 +337,19 @@ install_crn() {
     echo "==> CRN settings aggregate: $SETTINGS_AGGREGATE_ADDR"
 
     # Determine .deb source: branch (CI artifact) or version (GitHub release).
-    # NB: branch CI artifacts only exist for debian-12; releases ship one .deb
-    # per distro (debian-12/13, ubuntu-22.04/24.04), picked per CRN below —
-    # the bundled Python native extensions only import on the matching distro.
+    # Both the branch build and releases ship one .deb per distro (debian-12/13,
+    # ubuntu-22.04/24.04); the matching variant is picked PER CRN below, because
+    # the bundled Python native extensions (grpcio/cygrpc, pydantic_core) only
+    # import on the python the deb was built for (a debian-12/py3.11 deb breaks
+    # on an ubuntu-24.04/py3.12 static SNP host).
     local branch
     branch=$(read_vm_branch)
     local local_deb=""
     local version=""
 
     if [ -n "$branch" ]; then
-        local_deb="$LOCAL_DIR/aleph-vm.debian-12.deb"
         mkdir -p "$LOCAL_DIR"
-        fetch_vm_deb_from_branch "$branch" "$local_deb"
+        echo "==> aleph-vm branch: $branch (deb fetched per-CRN by distro)"
         echo "    vm-connector: $connector_image"
         echo "    CCN: $CCN_URL"
     else
@@ -462,17 +466,22 @@ EOF
         ssh_crn "$idx" "docker rm -f vm-connector 2>/dev/null || true"
         ssh_crn "$idx" "docker run -d -p 127.0.0.1:4021:4021/tcp --restart=always --name vm-connector $connector_image"
 
-        # Download/upload and install .deb
-        if [ -n "$local_deb" ]; then
-            echo "    Uploading aleph-vm .deb..."
-            scp_to_crn "$idx" "$local_deb"
-            ssh_crn "$idx" "mv /tmp/$(basename "$local_deb") /opt/aleph-vm.deb"
+        # Download/upload and install the .deb matching THIS CRN's distro (a
+        # static TEE server may run ubuntu-24.04 while the DO droplets run
+        # debian-12; the bundled Python native extensions only import on the
+        # deb's own python).
+        local deb_variant
+        deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
+        deb_variant="${deb_variant:-debian-12}"
+        if [ -n "$branch" ]; then
+            local branch_deb="$LOCAL_DIR/aleph-vm.${deb_variant}.deb"
+            if [ ! -f "$branch_deb" ]; then
+                ALEPH_VM_DEB_VARIANT="$deb_variant" fetch_vm_deb_from_branch "$branch" "$branch_deb"
+            fi
+            echo "    Uploading aleph-vm .deb (${deb_variant})..."
+            scp_to_crn "$idx" "$branch_deb"
+            ssh_crn "$idx" "mv /tmp/$(basename "$branch_deb") /opt/aleph-vm.deb"
         else
-            # Pick the release .deb matching this CRN's distro (e.g. a static
-            # TEE server may not run debian-12 like the DO droplets do).
-            local deb_variant
-            deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
-            deb_variant="${deb_variant:-debian-12}"
             local deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.${deb_variant}.deb"
             echo "    Downloading aleph-vm ${version} (${deb_variant})..."
             ssh_crn "$idx" "wget -q -O /opt/aleph-vm.deb '$deb_url'"

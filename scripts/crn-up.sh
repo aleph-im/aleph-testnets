@@ -272,7 +272,7 @@ provision() {
 
         echo "==> Creating droplet $name ..."
         doctl compute droplet create \
-            --image debian-12-x64 \
+            --image debian-13-x64 \
             --size "$DO_SIZE" \
             --region "$DO_REGION" \
             --ssh-keys "$DO_SSH_KEY_FINGERPRINT" \
@@ -472,7 +472,7 @@ EOF
         # deb's own python).
         local deb_variant
         deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
-        deb_variant="${deb_variant:-debian-12}"
+        deb_variant="${deb_variant:-debian-13}"
         if [ -n "$branch" ]; then
             local branch_deb="$LOCAL_DIR/aleph-vm.${deb_variant}.deb"
             if [ ! -f "$branch_deb" ]; then
@@ -582,7 +582,7 @@ upgrade_crn() {
         else
             local deb_variant
             deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
-            deb_variant="${deb_variant:-debian-12}"
+            deb_variant="${deb_variant:-debian-13}"
             local deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.${deb_variant}.deb"
             echo "    Downloading aleph-vm ${version} (${deb_variant})..."
             ssh_crn "$idx" "wget -q -O /opt/aleph-vm-upgrade.deb '$deb_url'"

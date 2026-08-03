@@ -152,28 +152,63 @@ def _discover_socket(key, host) -> str:
     return socket_path
 
 
-def _ensure_rust_supervisor(key, host, socket_path):
-    """Ensure the SNP host serves the Rust supervisor and its gRPC socket is up.
+def _running_supervisor_exe(key, host):
+    """The executable path of the running supervisor's main process, or ''."""
+    r = _snp_run(
+        key, host,
+        "pid=$(systemctl show -p MainPID --value aleph-vm-supervisor.service); "
+        "[ -n \"$pid\" ] && [ \"$pid\" != 0 ] && readlink -f /proc/$pid/exe || true",
+        timeout=30,
+    )
+    return r.stdout.strip()
 
-    SEV-SNP is Rust-only, so we set ALEPH_VM_SUPERVISOR_IMPL=rust (idempotent,
-    the documented swap: stop unit, edit supervisor.env, start unit) and wait for
-    the socket to appear. Requires the candidate deb (rust daemon) to be
-    installed on the host, which the workflow's SNP install step handles.
+
+def _ensure_rust_supervisor(key, host, socket_path):
+    """Ensure the SNP host serves the RUST supervisor and its gRPC socket is up.
+
+    SEV-SNP is Rust-only, so we set ALEPH_VM_SUPERVISOR_IMPL=rust (the
+    documented swap: stop unit, edit supervisor.env, start unit). The install
+    and registration phases restart the unit around the same time, so a single
+    fire-and-forget swap can race a queued restart that read supervisor.env
+    BEFORE our edit landed (observed: the python daemon serving the socket 3s
+    after the swap, run 30830339730). The socket alone cannot distinguish the
+    daemons (both serve the same gRPC path), so verify the RUNNING process is
+    the rust binary and retry the whole cycle until it is.
     """
-    _snp_run(key, host, "systemctl stop aleph-vm-supervisor.service", timeout=60)
     set_impl = (
         f"grep -q '^ALEPH_VM_SUPERVISOR_IMPL=' {SUPERVISOR_ENV_FILE} "
         f"&& sed -i 's/^ALEPH_VM_SUPERVISOR_IMPL=.*/ALEPH_VM_SUPERVISOR_IMPL=rust/' {SUPERVISOR_ENV_FILE} "
         f"|| echo 'ALEPH_VM_SUPERVISOR_IMPL=rust' >> {SUPERVISOR_ENV_FILE}"
     )
-    res = _snp_run(key, host, set_impl, timeout=30)
-    if res.returncode != 0:
-        pytest.fail(f"Could not set ALEPH_VM_SUPERVISOR_IMPL=rust on {host}: {res.stderr}")
-    start = _snp_run(key, host, "systemctl start aleph-vm-supervisor.service", timeout=60)
-    if start.returncode != 0:
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        stop = _snp_run(key, host, "systemctl stop aleph-vm-supervisor.service", timeout=60)
+        if stop.returncode != 0:
+            pytest.fail(f"Could not stop aleph-vm-supervisor on {host}: {stop.stderr}")
+        res = _snp_run(key, host, set_impl, timeout=30)
+        if res.returncode != 0:
+            pytest.fail(f"Could not set ALEPH_VM_SUPERVISOR_IMPL=rust on {host}: {res.stderr}")
+        start = _snp_run(key, host, "systemctl start aleph-vm-supervisor.service", timeout=60)
+        if start.returncode != 0:
+            pytest.fail(
+                f"aleph-vm-supervisor failed to start under impl=rust on {host}. "
+                f"Is the candidate deb (rust daemon) installed?\nstderr: {start.stderr}"
+            )
+        exe = _running_supervisor_exe(key, host)
+        if "aleph-vm-supervisor" in exe:
+            print(f"[snp] rust supervisor confirmed on {host} (exe={exe}, attempt {attempt})")
+            break
+        print(f"[snp] running supervisor is {exe or 'unknown'}, not the rust binary; retrying swap "
+              f"({attempt}/{attempts})")
+    else:
+        env_dump = _snp_run(key, host, f"cat {SUPERVISOR_ENV_FILE}", timeout=30).stdout
+        journal = _snp_run(
+            key, host, "journalctl -u aleph-vm-supervisor.service -n 20 --no-pager", timeout=30
+        ).stdout
         pytest.fail(
-            f"aleph-vm-supervisor failed to start under impl=rust on {host}. "
-            f"Is the candidate deb (rust daemon) installed?\nstderr: {start.stderr}"
+            f"The rust supervisor never became the running daemon on {host} after "
+            f"{attempts} swap attempts (last exe: {_running_supervisor_exe(key, host)!r}).\n"
+            f"supervisor.env:\n{env_dump}\njournal tail:\n{journal}"
         )
 
     def socket_ready():

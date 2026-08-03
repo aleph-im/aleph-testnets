@@ -193,7 +193,7 @@ jobs:
             echo "CRN_${idx}_NAME=$crn_name" >> "$GITHUB_ENV"
 
             doctl compute droplet create \
-              --image debian-12-x64 \
+              --image debian-13-x64 \
               --size s-8vcpu-16gb \
               --region ams3 \
               --ssh-keys ${{ vars.DO_SSH_KEY_FINGERPRINT }} \

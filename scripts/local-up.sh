@@ -31,7 +31,11 @@ setup_env() {
     # dependency tree upgrades packages the droplet has as Debian-owned
     # dists (typing_extensions), which system pip cannot uninstall
     # ("RECORD file not found"). System site-packages stay untouched.
-    python3 -m venv "$REPO_ROOT/.venv"
+    if ! python3 -m venv "$REPO_ROOT/.venv" 2>/dev/null; then
+        # Fresh droplets ship python without ensurepip.
+        NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive             apt-get -o DPkg::Lock::Timeout=-1 install -y python3-venv
+        python3 -m venv "$REPO_ROOT/.venv"
+    fi
     "$REPO_ROOT/.venv/bin/pip" install --quiet --upgrade pip
     "$REPO_ROOT/.venv/bin/pip" install "$REPO_ROOT"
 

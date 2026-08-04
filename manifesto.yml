@@ -6,7 +6,7 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    tag: "0.10.2-rc5"
+    tag: "0.10.3-rc6"
 
   p2p-service:
     image: alephim/p2p-service
@@ -24,13 +24,17 @@ components:
     image: alephim/credit-service
     tag: "latest"
 
+  # Scheduler images with V-PROGRAM scheduling (aleph-vm-scheduler PR #193).
+  # Until #193 releases, build locally from branch od/vprogram-scheduling:
+  #   docker build -f scheduler-rs/Dockerfile  -t alephim/scheduler-rs:vprogram-rc1  .
+  #   docker build -f scheduler-api/Dockerfile -t alephim/scheduler-api:vprogram-rc1 .
   scheduler-rs:
     image: alephim/scheduler-rs
-    tag: "0.1.2"
+    tag: "vprogram-rc1"
 
   scheduler-api:
     image: alephim/scheduler-api
-    tag: "0.1.2"
+    tag: "vprogram-rc1"
 
   aleph-vm:
     # This branch (od/aleph-vm-upgrade-checks) only runs aleph-vm upgrade

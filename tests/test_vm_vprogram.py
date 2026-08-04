@@ -35,6 +35,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from conftest import _upload_with_balance_retry  # noqa: E402
 from test_vm_snp import SNP_HOST, _snp_run  # noqa: E402
+from vm_helpers import resolve_crn_host  # noqa: E402
+
+import subprocess  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The pinned MAINNET SNP runtime bundle (aleph-vm PR #1050 reference values).
 # Recorded in the staged manifest for provenance; the message's refs must be
@@ -66,6 +71,35 @@ def poll(what: str, fn, timeout: float, interval: float = 5):
             return last
         time.sleep(interval)
     pytest.fail(f"Timed out after {timeout}s waiting for {what} (last: {last!r})")
+
+
+@pytest.fixture(scope="session")
+def tee_crn_registered(ccn_url) -> None:
+    """Register the TEE CRN in the corechannel aggregate, scoped to its index.
+
+    Deliberately done HERE and not in the workflow: a registered CRN is
+    schedulable for instances too, and the upgrade tests must not have their
+    instances placed on a static host that refuses root SSH and cannot be
+    upgraded. This suite runs after them (alphabetical order), so the TEE CRN
+    joins the pool only for the v-program scenario. Idempotent across runs.
+    """
+    tee_idx = os.environ.get("TEE_IDX", "1")
+    env = {
+        **os.environ,
+        "CCN_URL": ccn_url,
+        "SSH_KEY_FILE": os.environ.get("SSH_KEY_FILE", "/root/.ssh/id_ed25519"),
+        "CRN_COUNT": str(int(tee_idx) + 1),
+        "CRN_ONLY_INDEX": tee_idx,
+    }
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "crn-up.sh"), "--register"],
+        cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=600,
+    )
+    if result.returncode != 0:
+        pytest.fail(
+            f"TEE CRN registration failed:\nstdout: {result.stdout[-1500:]}\nstderr: {result.stderr[-1500:]}"
+        )
+    print(f"[vprogram] TEE CRN registered (index {tee_idx})")
 
 
 @pytest.fixture(scope="session")
@@ -187,19 +221,21 @@ def forget_vprogram(ccn_url: str, private_key: str, item_hash: str) -> None:
 
 
 def _find_assignment(plan: dict, item_hash: str):
-    """The node dict whose v_programs bucket contains item_hash, else None.
+    """The (node_key, node_entry) whose v_programs bucket holds item_hash.
 
-    Walks the plan defensively instead of pinning its exact shape: any dict
-    with a `v_programs` list containing the hash is the assignment.
+    Walks the plan defensively instead of pinning its exact shape: node
+    identity is the key mapping to the dict that carries the bucket.
     """
     stack = [plan]
     while stack:
         node = stack.pop()
         if isinstance(node, dict):
-            bucket = node.get("v_programs")
-            if isinstance(bucket, list) and item_hash in bucket:
-                return node
-            stack.extend(node.values())
+            for key, value in node.items():
+                if isinstance(value, dict):
+                    bucket = value.get("v_programs")
+                    if isinstance(bucket, list) and item_hash in bucket:
+                        return {"node_key": key, "entry": value}
+                stack.append(value)
         elif isinstance(node, list):
             stack.extend(node)
     return None
@@ -218,7 +254,9 @@ def test_snp_crn_advertises_vcpu_models(crn_ssh_key):
     assert "EPYC-v4" in models, f"SNP CRN vcpu models: {models} (usage properties: {usage.get('properties')})"
 
 
-def test_vprogram_scheduled_to_snp_crn(ccn_url, private_key, scheduler_api_url, crn_ssh_key, staged_refs):
+def test_vprogram_scheduled_to_snp_crn(
+    ccn_url, private_key, scheduler_api_url, crn_ssh_key, staged_refs, aleph_cli, tee_crn_registered
+):
     test_start = time.time()
     content = build_vprogram_content(_address_of(private_key), staged_refs)
     item_hash = publish_vprogram(ccn_url, private_key, content)
@@ -241,9 +279,10 @@ def test_vprogram_scheduled_to_snp_crn(ccn_url, private_key, scheduler_api_url, 
             timeout=300,
             interval=10,
         )
-        assignment_text = json.dumps(assignment)
-        assert SNP_HOST in assignment_text, (
-            f"v-program assigned, but not to the SNP CRN ({SNP_HOST}): {assignment_text}"
+        node_host = resolve_crn_host(aleph_cli, assignment["node_key"])
+        assert node_host == SNP_HOST, (
+            f"v-program assigned to {assignment['node_key']} ({node_host}), "
+            f"not the SNP CRN ({SNP_HOST}): {json.dumps(assignment)}"
         )
 
         # 3. The signed allocation reached the CRN, which fetched the message

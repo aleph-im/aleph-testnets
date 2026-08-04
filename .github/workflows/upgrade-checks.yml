@@ -384,17 +384,11 @@ jobs:
             GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             ALEPH_VM_BRANCH='${{ inputs.candidate_branch || env.CANDIDATE_BRANCH }}' \
             bash scripts/crn-up.sh --install"
-
-          # Register the TEE CRN in the corechannel aggregate (scoped to its
-          # index; the DO CRNs were registered in the previous step). Without
-          # this the scheduler never discovers the SNP node, and v-programs
-          # park as waiting-for-nodes forever.
-          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
-            CCN_URL=http://${DROPLET_IPV4}:4024 \
-            SSH_KEY_FILE=/root/.ssh/id_ed25519 \
-            CRN_COUNT=$((TEE_IDX + 1)) \
-            CRN_ONLY_INDEX=${TEE_IDX} \
-            bash scripts/crn-up.sh --register"
+          # NB: the TEE CRN is deliberately NOT registered here. Registration
+          # makes it schedulable for INSTANCES too, which breaks the upgrade
+          # tests (instances land on a host that refuses root SSH and must not
+          # be upgraded). tests/test_vm_vprogram.py registers it in a session
+          # fixture, after the upgrade tests have run.
 
       - name: Download measured image + attest-cli (from build-image)
         if: steps.snp.outputs.configured == 'true'

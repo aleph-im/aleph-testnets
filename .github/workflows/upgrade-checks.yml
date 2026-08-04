@@ -21,7 +21,7 @@ on:
       candidate_branch:
         description: "aleph-vm branch whose CI deb the CRN is upgraded to"
         type: string
-        default: "od/pools-fixes-integration"
+        default: "od/vprogram-integration"
       rust_swap:
         description: "Run scenario B (ALEPH_VM_SUPERVISOR_IMPL python<->rust swap; needs Rust daemon increment 2+)"
         type: boolean
@@ -38,11 +38,10 @@ permissions:
 # Defaults for push-triggered runs; workflow_dispatch inputs override them.
 env:
   BASELINE_VERSION: "1.13.0"
-  # Multi-disk volume pools (#1049) + review follow-ups (#1064-#1067),
-  # aggregated on the DO-NOT-MERGE deb-builder branch (aleph-vm PR #1068).
-  # Goal: backward compatibility of the pooled-storage stack before the
-  # V-PROGRAM integration tests land.
-  CANDIDATE_BRANCH: "od/pools-fixes-integration"
+  # V-PROGRAM control plane (aleph-vm #1050+#1052 aggregated on the
+  # DO-NOT-MERGE deb-builder branch, aleph-vm PR #1070) on top of current
+  # dev. Scenario: tests/test_vm_vprogram.py (Milestone A).
+  CANDIDATE_BRANCH: "od/vprogram-integration"
   # Scenario B (ALEPH_VM_SUPERVISOR_IMPL python<->rust swap) needs a
   # candidate deb that ships the launcher (aleph-vm PR #1024 onwards).
   RUST_SWAP: "true"

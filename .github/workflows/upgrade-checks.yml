@@ -88,6 +88,10 @@ jobs:
           mv snp-artifacts/aleph-attest-cli snp-artifacts/bin/aleph-attest-cli
           chmod +x snp-artifacts/bin/aleph-attest-cli
           echo "Measured image measurement: $(cat snp-artifacts/image/measurement.hex)"
+          # Preserve the raw bundle tarball: the V-PROGRAM scenario uploads it
+          # to the testnet CCN as the runtime bundle STORE so the CRN fetches
+          # it in-protocol (sha256 == SNP_IMAGE_HASH == the manifest's sha256).
+          cp snp-image.tar.gz snp-artifacts/bundle.tar.gz
 
       - name: Upload SNP image artifact
         uses: actions/upload-artifact@v4

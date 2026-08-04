@@ -1,4 +1,4 @@
-"""V-PROGRAM end-to-end scenario, Milestone A: the control plane.
+"""V-PROGRAM end-to-end scenario: publish, schedule, boot on a real SNP host.
 
 Chain under test:
   publish (python SDK; temporary until an aleph-rs rc ships vprogram support)
@@ -6,19 +6,23 @@ Chain under test:
   -> scheduler (aleph-vm-scheduler #193) plans it onto the SNP-capable CRN
      via TEE vcpu-model matching
   -> signed allocation POST to the CRN
-  -> the CRN (aleph-vm #1052) fetches the message and reports the clean
-     "does not implement the SEV-SNP launch path yet" error.
+  -> the CRN fetches the runtime manifest + bundle it references, extracts
+     the measured image, and boots an SEV-SNP guest (aleph-vm launch
+     increment): the VM reaches RUNNING with confidential_mode sev_snp.
 
-The final assertion is the not-implemented error ON PURPOSE: launch wiring is
-a designated later aleph-vm increment. When it lands, flip the last section
-of test_vprogram_scheduled_to_snp_crn to boot + attest-cli verification and
-this file becomes the full hello-world E2E test.
+The runtime is the real pinned measured bundle (aleph-vm PR #1050): the
+harness uploads the exact tarball CI already fetches as the bundle STORE and
+a matching RuntimeManifest as the runtime STORE, so the CRN launch path runs
+in-protocol. The workload is the built-in aleph.builtin/1 httpd (the message
+carries an inert placeholder workload block; the launch path attaches only
+the platform rootfs + hash tree today).
 
 Like the rest of the suite, this runs ON the CCN droplet (scheduler-api is
 loopback-bound there).
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import time
@@ -41,14 +45,13 @@ import subprocess  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The pinned MAINNET SNP runtime bundle (aleph-vm PR #1050 reference values).
-# Recorded in the staged manifest for provenance; the message's refs must be
-# STOREs that exist on THIS testnet CCN: the scheduler resolves every
-# referenced store for disk accounting and a missing one ("Message not
-# found") keeps the v-program out of the plan entirely.
-MAINNET_BUNDLE_REF = "87287e4a5c8d7554a50f982cd681b64b2600c0bbb1c0b1e618465e022e01b977"
-
 SNP_MEASUREMENT = os.environ.get("ALEPH_TESTNET_SNP_MEASUREMENT", "")
+# The measured image + attest-cli staged by build-image/snp-artifacts.sh.
+# .local/snp/bundle.tar.gz is the exact tarball CI fetched (sha256 ==
+# SNP_IMAGE_HASH); .local/snp/image/ is its extracted contents.
+SNP_STAGE_DIR = REPO_ROOT / ".local" / "snp"
+BUNDLE_TARBALL = SNP_STAGE_DIR / "bundle.tar.gz"
+BUNDLE_IMAGE_DIR = SNP_STAGE_DIR / "image"
 
 pytestmark = pytest.mark.skipif(
     not (SNP_HOST and SNP_MEASUREMENT),
@@ -59,6 +62,14 @@ pytestmark = pytest.mark.skipif(
 def _http_json(url: str, timeout: float = 15) -> dict:
     with urllib.request.urlopen(url, timeout=timeout) as response:
         return json.load(response)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def poll(what: str, fn, timeout: float, interval: float = 5):
@@ -115,29 +126,79 @@ def tee_crn_registered(ccn_url) -> None:
     print(f"[vprogram] TEE CRN registered and healthy (index {tee_idx})")
 
 
+def _build_runtime_manifest(bundle_ref: str) -> dict:
+    """A strict RuntimeManifest (aleph-vprogram-runtime v1) for the staged
+    bundle. sha256/size/platform_roothash are read from the staged files so
+    the manifest is self-consistent with whatever tarball we upload; the CRN
+    verifies the downloaded bundle against them."""
+    sha256 = _sha256(BUNDLE_TARBALL)
+    size = BUNDLE_TARBALL.stat().st_size
+    platform_roothash = (BUNDLE_IMAGE_DIR / "rootfs.ext4.roothash").read_text().strip()
+    return {
+        "format": "aleph-vprogram-runtime",
+        "format_version": 1,
+        "name": "aleph-snp-attest",
+        "version": "testnet",
+        "platform": "sev_snp",
+        "bundle": {
+            "ref": bundle_ref,
+            "sha256": sha256,
+            "size": size,
+            "members": {
+                "ovmf": "image/OVMF.fd",
+                "kernel": "image/bzImage",
+                "initrd": "image/initrd",
+                "platform_rootfs": "image/rootfs.ext4",
+                "platform_hash_tree": "image/rootfs.ext4.verity",
+            },
+        },
+        "boot": {
+            "method": "qemu-direct-kernel",
+            "kernel_hashes": True,
+            "cpu_models": ["EPYC-v4"],
+            "platform_roothash": platform_roothash,
+            "cmdline_template": "console=ttyS0 root=/dev/mapper/verity-root ro roothash={platform_roothash}",
+        },
+        "attestation": [
+            {"protocol": "aleph.ra-tls", "version": "1", "transport": {"type": "tcp", "port": 8443}}
+        ],
+        "workload": {"contract": "aleph.builtin/1", "upstream_port": 8080},
+        "source": {
+            "repo": "https://github.com/aleph-im/aleph-vm",
+            "rev": "testnet",
+            "build": "nix build .#image",
+        },
+    }
+
+
 @pytest.fixture(scope="session")
 def staged_refs(aleph_cli, tmp_path_factory) -> dict:
     """Stage the STOREs the v-program references onto the testnet CCN.
 
-    Milestone A placeholders with documented provenance: the runtime manifest
-    becomes the #1050-generated one (and the bundle a real testnet upload) in
-    the launch milestone; the aleph.builtin/1 runtime serves its built-in
-    workload, so the workload blobs are inert.
+    - bundle:   the exact measured-image tarball CI fetched (57MB), uploaded
+                so the CRN launch path downloads it in-protocol.
+    - manifest: a strict RuntimeManifest pointing at the bundle STORE; this is
+                the message's runtime.ref.
+    - workload/hash_tree: inert placeholders. The message schema requires a
+                workload block and the SCHEDULER resolves every referenced
+                store for disk sizing, so they must exist even though the
+                launch path does not attach them (aleph.builtin/1 serves its
+                built-in workload).
     """
+    assert BUNDLE_TARBALL.is_file(), f"staged bundle tarball missing: {BUNDLE_TARBALL}"
     staging = tmp_path_factory.mktemp("vprogram")
-    files = {
-        "manifest": json.dumps(
-            {
-                "note": "Milestone A placeholder runtime manifest",
-                "mainnet_bundle_ref": MAINNET_BUNDLE_REF,
-                "workload_contract": "aleph.builtin/1",
-            }
-        ).encode(),
-        "workload": b"aleph-testnet v-program placeholder workload\n",
-        "hash_tree": b"aleph-testnet v-program placeholder hash tree\n",
-    }
-    refs = {}
-    for name, payload in files.items():
+
+    bundle_ref = _upload_with_balance_retry(aleph_cli, str(BUNDLE_TARBALL), "v-program bundle")
+
+    manifest_path = staging / "runtime-manifest.json"
+    manifest_path.write_text(json.dumps(_build_runtime_manifest(bundle_ref)))
+    manifest_ref = _upload_with_balance_retry(aleph_cli, str(manifest_path), "v-program manifest")
+
+    refs = {"manifest": manifest_ref, "bundle": bundle_ref}
+    for name, payload in (
+        ("workload", b"aleph-testnet v-program placeholder workload\n"),
+        ("hash_tree", b"aleph-testnet v-program placeholder hash tree\n"),
+    ):
         path = staging / f"{name}.bin"
         path.write_bytes(payload)
         refs[name] = _upload_with_balance_retry(aleph_cli, str(path), f"v-program {name}")
@@ -153,10 +214,13 @@ def build_vprogram_content(address: str, refs: dict) -> dict:
         "allow_amend": False,
         "payment": {"type": "credit"},
         "environment": {"internet": True},
-        "resources": {"vcpus": 1, "memory": 2048, "seconds": 30},
+        # vcpus MUST match the measured bundle: the launch measurement is a
+        # function of the vCPU count (2 for the pinned EPYC-v4 image), so a
+        # mismatch would boot but fail attestation.
+        "resources": {"vcpus": 2, "memory": 2048, "seconds": 30},
         "runtime": {
             "ref": refs["manifest"],
-            "comment": "placeholder manifest for the aleph-snp-attest bundle (aleph.builtin/1)",
+            "comment": "aleph-snp-attest measured runtime bundle (aleph.builtin/1)",
         },
         "workload": {
             "ref": refs["workload"],
@@ -298,28 +362,51 @@ def test_vprogram_scheduled_to_snp_crn(
             f"not the SNP CRN ({SNP_HOST}): {json.dumps(assignment)}"
         )
 
-        # 3. The signed allocation reached the CRN, which fetched the message
-        #    and failed CLEANLY at the designated launch seam. When the launch
-        #    increment lands, replace this block with: wait for the VM to
-        #    boot, then attest with aleph-attest-cli and fetch the built-in
-        #    workload over the attested channel.
-        def crn_reported_not_implemented():
-            result = _snp_run(
-                crn_ssh_key,
-                SNP_HOST,
-                f"journalctl -u aleph-vm-agent.service --since '@{int(test_start)}' --no-pager | "
-                f"grep -m1 'does not implement the SEV-SNP launch path' || true",
-                timeout=60,
-            )
-            return result.stdout.strip() or None
+        # 3. The signed allocation reached the CRN, which fetched the runtime
+        #    manifest + bundle, extracted the measured image, and booted an
+        #    SEV-SNP guest. The v1 execution list is keyed by item hash and
+        #    lists a VM only once it is RUNNING, so the hash appearing there is
+        #    the boot signal.
+        def vprogram_running():
+            try:
+                listing = _http_json(f"http://{SNP_HOST}:4020/about/executions/list")
+            except Exception as error:  # noqa: BLE001 - transient during launch
+                print(f"[vprogram] execution list poll: {error}")
+                return None
+            return item_hash if item_hash in listing else None
 
-        line = poll(
-            "clean not-implemented error in the CRN agent journal",
-            crn_reported_not_implemented,
-            timeout=300,
-            interval=10,
+        poll(
+            "v-program VM RUNNING on the SNP CRN",
+            vprogram_running,
+            timeout=600,
+            interval=15,
         )
-        assert item_hash in line, f"error line does not mention the v-program: {line}"
+
+        # It booted as an SEV-SNP confidential guest, not accidentally plain:
+        # the daemon stands up a per-tap DHCP server only on the SNP launch
+        # path, and it is the guest's boot-time udhcpc that draws a lease.
+        snp_boot = _snp_run(
+            crn_ssh_key,
+            SNP_HOST,
+            "journalctl -u aleph-vm-supervisor.service --no-pager | "
+            "grep 'started per-tap DHCP server for SNP VM' | tail -1 || true",
+            timeout=60,
+        )
+        assert snp_boot.stdout.strip(), (
+            "v-program is RUNNING but no SNP DHCP server was started — did it boot as a plain VM? "
+            f"(journal grep empty)"
+        )
+        print(f"[vprogram] booted as SEV-SNP guest: {snp_boot.stdout.strip()[-200:]}")
+
+        # Also confirm the CRN never hit the old not-implemented seam.
+        not_impl = _snp_run(
+            crn_ssh_key,
+            SNP_HOST,
+            f"journalctl -u aleph-vm-agent.service --since '@{int(test_start)}' --no-pager | "
+            f"grep -c 'does not implement the SEV-SNP launch path' || true",
+            timeout=60,
+        )
+        assert not_impl.stdout.strip() in ("", "0"), "CRN still hit the not-implemented launch seam"
     finally:
         forget_vprogram(ccn_url, private_key, item_hash)
 

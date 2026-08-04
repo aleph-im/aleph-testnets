@@ -99,7 +99,20 @@ def tee_crn_registered(ccn_url) -> None:
         pytest.fail(
             f"TEE CRN registration failed:\nstdout: {result.stdout[-1500:]}\nstderr: {result.stderr[-1500:]}"
         )
-    print(f"[vprogram] TEE CRN registered (index {tee_idx})")
+    # Registration restarts the CRN supervisor (node-hash env update); its
+    # usage endpoint 500s during the window. Publishing while the node looks
+    # unhealthy parks the v-program, and the scheduler does not replan on
+    # node recovery alone (observed run 30904164544), so wait until the node
+    # answers before letting the test publish.
+    poll(
+        "TEE CRN usage endpoint healthy after registration",
+        lambda: _http_json(f"http://{SNP_HOST}:4020/about/usage/system"),
+        timeout=180,
+    )
+    # One extra node-watcher cycle so the scheduler's snapshot is refreshed
+    # from the healthy endpoint before the VM delta triggers the replan.
+    time.sleep(35)
+    print(f"[vprogram] TEE CRN registered and healthy (index {tee_idx})")
 
 
 @pytest.fixture(scope="session")

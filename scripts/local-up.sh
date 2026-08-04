@@ -27,11 +27,16 @@ TEST_PRIVATE_KEY="47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a3492
 
 setup_env() {
     echo "==> Installing Python dependencies..."
-    export PIP_BREAK_SYSTEM_PACKAGES=1
-    pip install "$REPO_ROOT"
+    # A dedicated venv: the harness now pulls aleph-sdk-python, whose
+    # dependency tree upgrades packages the droplet has as Debian-owned
+    # dists (typing_extensions), which system pip cannot uninstall
+    # ("RECORD file not found"). System site-packages stay untouched.
+    python3 -m venv "$REPO_ROOT/.venv"
+    "$REPO_ROOT/.venv/bin/pip" install --quiet --upgrade pip
+    "$REPO_ROOT/.venv/bin/pip" install "$REPO_ROOT"
 
     echo "==> Generating .env from manifesto..."
-    python3 -c "
+    "$REPO_ROOT/.venv/bin/python" -c "
 import yaml
 with open('$REPO_ROOT/manifesto.yml') as f:
     m = yaml.safe_load(f)
@@ -72,7 +77,7 @@ for section in ('components', 'infrastructure'):
     fi
     echo "==> Downloading Aleph CLI..."
     mkdir -p "$BIN_DIR"
-    CLI_URL=$(python3 -c "
+    CLI_URL=$("$REPO_ROOT/.venv/bin/python" -c "
 import yaml
 with open('$REPO_ROOT/manifesto.yml') as f:
     m = yaml.safe_load(f)
@@ -280,7 +285,7 @@ run_tests() {
     export ALEPH_TESTNET_SNP_AMD_PRODUCT="${ALEPH_TESTNET_SNP_AMD_PRODUCT:-Genoa}"
 
     cd "$REPO_ROOT"
-    pytest -v --junitxml=results.xml "$@"
+    "$REPO_ROOT/.venv/bin/python" -m pytest -v --junitxml=results.xml "$@"
 }
 
 dump_logs() {

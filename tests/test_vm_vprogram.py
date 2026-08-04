@@ -33,21 +33,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from conftest import _upload_with_balance_retry  # noqa: E402
 from test_vm_snp import SNP_HOST, _snp_run  # noqa: E402
 
-# The pinned mainnet SNP runtime bundle (aleph-vm PR #1050 reference values).
-# The measurement digest is read from the staged image at runtime
-# (ALEPH_TESTNET_SNP_MEASUREMENT) so it always matches the pinned bundle.
-RUNTIME_BUNDLE_REF = "87287e4a5c8d7554a50f982cd681b64b2600c0bbb1c0b1e618465e022e01b977"
-# Milestone A placeholder: the aleph.builtin/1 runtime serves its built-in
-# workload, but the message schema requires a workload block. pyaleph rc6
-# performs no ref-existence checks for v-programs, so these placeholder
-# hashes are accepted; they become real refs in the launch milestone.
-PLACEHOLDER_WORKLOAD = {
-    "ref": "beef" * 16,
-    "hash_tree": "feed" * 16,
-    "roothash": "cdcd" * 16,
-}
+# The pinned MAINNET SNP runtime bundle (aleph-vm PR #1050 reference values).
+# Recorded in the staged manifest for provenance; the message's refs must be
+# STOREs that exist on THIS testnet CCN: the scheduler resolves every
+# referenced store for disk accounting and a missing one ("Message not
+# found") keeps the v-program out of the plan entirely.
+MAINNET_BUNDLE_REF = "87287e4a5c8d7554a50f982cd681b64b2600c0bbb1c0b1e618465e022e01b977"
 
 SNP_MEASUREMENT = os.environ.get("ALEPH_TESTNET_SNP_MEASUREMENT", "")
 
@@ -74,7 +68,37 @@ def poll(what: str, fn, timeout: float, interval: float = 5):
     pytest.fail(f"Timed out after {timeout}s waiting for {what} (last: {last!r})")
 
 
-def build_vprogram_content(address: str) -> dict:
+@pytest.fixture(scope="session")
+def staged_refs(aleph_cli, tmp_path_factory) -> dict:
+    """Stage the STOREs the v-program references onto the testnet CCN.
+
+    Milestone A placeholders with documented provenance: the runtime manifest
+    becomes the #1050-generated one (and the bundle a real testnet upload) in
+    the launch milestone; the aleph.builtin/1 runtime serves its built-in
+    workload, so the workload blobs are inert.
+    """
+    staging = tmp_path_factory.mktemp("vprogram")
+    files = {
+        "manifest": json.dumps(
+            {
+                "note": "Milestone A placeholder runtime manifest",
+                "mainnet_bundle_ref": MAINNET_BUNDLE_REF,
+                "workload_contract": "aleph.builtin/1",
+            }
+        ).encode(),
+        "workload": b"aleph-testnet v-program placeholder workload\n",
+        "hash_tree": b"aleph-testnet v-program placeholder hash tree\n",
+    }
+    refs = {}
+    for name, payload in files.items():
+        path = staging / f"{name}.bin"
+        path.write_bytes(payload)
+        refs[name] = _upload_with_balance_retry(aleph_cli, str(path), f"v-program {name}")
+    print(f"[vprogram] staged refs: {refs}")
+    return refs
+
+
+def build_vprogram_content(address: str, refs: dict) -> dict:
     """The hello-world v-program content, schema-validated before publishing."""
     content = {
         "address": address,
@@ -84,10 +108,14 @@ def build_vprogram_content(address: str) -> dict:
         "environment": {"internet": True},
         "resources": {"vcpus": 1, "memory": 2048, "seconds": 30},
         "runtime": {
-            "ref": RUNTIME_BUNDLE_REF,
-            "comment": "aleph-snp-attest measured bundle (aleph.builtin/1)",
+            "ref": refs["manifest"],
+            "comment": "placeholder manifest for the aleph-snp-attest bundle (aleph.builtin/1)",
         },
-        "workload": PLACEHOLDER_WORKLOAD,
+        "workload": {
+            "ref": refs["workload"],
+            "hash_tree": refs["hash_tree"],
+            "roothash": "cdcd" * 16,
+        },
         "verification": {
             "backend": "sev_snp",
             "policy": 196608,
@@ -190,9 +218,9 @@ def test_snp_crn_advertises_vcpu_models(crn_ssh_key):
     assert "EPYC-v4" in models, f"SNP CRN vcpu models: {models} (usage properties: {usage.get('properties')})"
 
 
-def test_vprogram_scheduled_to_snp_crn(ccn_url, private_key, scheduler_api_url, crn_ssh_key):
+def test_vprogram_scheduled_to_snp_crn(ccn_url, private_key, scheduler_api_url, crn_ssh_key, staged_refs):
     test_start = time.time()
-    content = build_vprogram_content(_address_of(private_key))
+    content = build_vprogram_content(_address_of(private_key), staged_refs)
     item_hash = publish_vprogram(ccn_url, private_key, content)
 
     try:

@@ -184,7 +184,12 @@ def _ensure_rust_supervisor(key, host, socket_path):
     for attempt in range(1, attempts + 1):
         stop = _snp_run(key, host, "systemctl stop aleph-vm-supervisor.service", timeout=60)
         if stop.returncode != 0:
-            pytest.fail(f"Could not stop aleph-vm-supervisor on {host}: {stop.stderr}")
+            # A queued restart (install/registration churn) can cancel our
+            # stop job ("Job ... canceled."); that is exactly the race this
+            # loop exists to absorb, so retry rather than fail.
+            print(f"[snp] stop failed ({stop.stderr.strip()}), retrying swap ({attempt}/{attempts})")
+            time.sleep(3)
+            continue
         res = _snp_run(key, host, set_impl, timeout=30)
         if res.returncode != 0:
             pytest.fail(f"Could not set ALEPH_VM_SUPERVISOR_IMPL=rust on {host}: {res.stderr}")

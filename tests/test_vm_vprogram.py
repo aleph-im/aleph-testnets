@@ -100,11 +100,13 @@ def build_vprogram_content(address: str) -> dict:
             ],
         },
     }
-    # Fail fast on schema drift, before anything reaches the CCN.
+    # Fail fast on schema drift, and publish the model's CANONICAL dump:
+    # the message validator requires the raw content dict to equal the parsed
+    # model's model_dump(exclude_none=True), so model-added defaults (e.g.
+    # volumes: []) must be present in what we submit.
     from aleph_message.models.execution.vprogram import VerifiableProgramContent
 
-    VerifiableProgramContent(**content)
-    return content
+    return VerifiableProgramContent(**content).model_dump(mode="json", exclude_none=True)
 
 
 def publish_vprogram(ccn_url: str, private_key: str, content: dict) -> str:

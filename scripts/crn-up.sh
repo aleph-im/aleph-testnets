@@ -725,6 +725,13 @@ register_crn() {
     fi
 
     for idx in $(seq 0 $((CRN_COUNT - 1))); do
+        # CRN_ONLY_INDEX scopes --register to a single CRN, like --install:
+        # the TEE CRN is registered in its own workflow step, after the DO
+        # CRNs were already registered.
+        if [ -n "${CRN_ONLY_INDEX:-}" ] && [ "$idx" != "$CRN_ONLY_INDEX" ]; then
+            echo "==> CRN $idx: skipping registration (CRN_ONLY_INDEX=$CRN_ONLY_INDEX)"
+            continue
+        fi
         local ip
         ip=$(crn_ip "$idx")
         local crn_name_str="testnet-crn-$idx"

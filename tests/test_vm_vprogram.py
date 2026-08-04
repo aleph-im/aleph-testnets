@@ -27,7 +27,13 @@ import urllib.request
 import pytest
 
 # Reuse the SNP host SSH plumbing (host/user env gates, sudo -n elevation).
-from test_vm_snp import SNP_HOST, _snp_run
+# The tests directory is not importable under every pytest invocation mode
+# (e.g. `python -m pytest` from the repo root), so pin it onto sys.path.
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_vm_snp import SNP_HOST, _snp_run  # noqa: E402
 
 # The pinned mainnet SNP runtime bundle (aleph-vm PR #1050 reference values).
 # The measurement digest is read from the staged image at runtime

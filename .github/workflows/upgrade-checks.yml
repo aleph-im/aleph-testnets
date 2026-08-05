@@ -69,7 +69,7 @@ jobs:
       # tarball. STORE message 87287e4a5c8d7554a50f982cd681b64b2600c0bbb1c0b1e618465e022e01b977;
       # image measurement de933c37... (D4 tip: D2 DHCP + D3 chroot DNS/secrets
       # + D4 shellcheck directives; EPYC-v4, 2 vCPU). Immutable.
-      SNP_IMAGE_HASH: 1db0d69c96dc7ed6c8a6cbb8c63f8de516ef4ed668e95c468cc216e4c44d911b
+      SNP_IMAGE_HASH: 14656e922cf795d99b6af2f5a83ff0ab4827763792b46965738094b1fb0355e7
       SNP_IMAGE_GATEWAY: https://official.aleph.cloud
     steps:
       - name: Fetch measured image + attest-cli from Aleph

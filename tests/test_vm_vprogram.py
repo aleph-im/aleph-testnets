@@ -6,16 +6,19 @@ Chain under test:
   -> scheduler (aleph-vm-scheduler #193) plans it onto the SNP-capable CRN
      via TEE vcpu-model matching
   -> signed allocation POST to the CRN
-  -> the CRN fetches the runtime manifest + bundle it references, extracts
-     the measured image, and boots an SEV-SNP guest (aleph-vm launch
-     increment): the VM reaches RUNNING with confidential_mode sev_snp.
+  -> the CRN fetches the runtime manifest + bundle, extracts the measured
+     platform image, downloads the fib-service workload volume the message
+     references (content.workload), verity-verifies + mounts it, and boots an
+     SEV-SNP guest that runs fib.
+  -> a client attests the workload-bound measurement and calls GET /fib/10
+     over the attested channel, getting 55.
 
-The runtime is the real pinned measured bundle (aleph-vm PR #1050): the
-harness uploads the exact tarball CI already fetches as the bundle STORE and
-a matching RuntimeManifest as the runtime STORE, so the CRN launch path runs
-in-protocol. The workload is the built-in aleph.builtin/1 httpd (the message
-carries an inert placeholder workload block; the launch path attaches only
-the platform rootfs + hash tree today).
+The workload is delivered via the real mechanism (aleph.exec/1): fib-service
+is a dm-verity ext4 volume the message points at, measured into the launch
+via workload_roothash in the cmdline. The harness uploads the platform bundle
++ the workload volume + hash tree as STOREs and computes the per-workload
+measurement (sev-snp-measure) so verification.measurements[].digest matches
+what the guest produces.
 
 Like the rest of the suite, this runs ON the CCN droplet (scheduler-api is
 loopback-bound there).
@@ -38,9 +41,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from conftest import _upload_with_balance_retry  # noqa: E402
-from test_vm_snp import SNP_HOST, _snp_run  # noqa: E402
+from test_vm_snp import SNP_AMD_PRODUCT, SNP_ATTEST_CLI, SNP_HOST, _snp_run  # noqa: E402
 from vm_helpers import resolve_crn_host  # noqa: E402
 
+import re  # noqa: E402
 import subprocess  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -52,6 +56,40 @@ SNP_MEASUREMENT = os.environ.get("ALEPH_TESTNET_SNP_MEASUREMENT", "")
 SNP_STAGE_DIR = REPO_ROOT / ".local" / "snp"
 BUNDLE_TARBALL = SNP_STAGE_DIR / "bundle.tar.gz"
 BUNDLE_IMAGE_DIR = SNP_STAGE_DIR / "image"
+# The user workload volume (fib-service), staged from the same image tarball.
+WORKLOAD_DIR = SNP_STAGE_DIR / "workload"
+
+# The exec-runtime cmdline template: byte-identical to what the daemon emits
+# and what the guest measures (both roothashes, single spaces).
+CMDLINE_TEMPLATE_EXEC = "console=ttyS0 root=/dev/mapper/verity-root ro roothash={platform_roothash} workload_roothash={workload_roothash}"
+
+
+def _compute_workload_measurement(
+    platform_roothash: str, workload_roothash: str
+) -> str:
+    """The per-workload SEV-SNP launch digest the publisher pins. Mirrors
+    aleph-vm's compute_snp_measurement (sev-snp-measure 0.0.12): a function of
+    OVMF + kernel + initrd + the exec cmdline (both roothashes) + vcpus + type.
+    The image is measured for EPYC-v4 / 2 vCPU (nix flake default)."""
+    from sevsnpmeasure import guest, vcpu_types, vmm_types
+    from sevsnpmeasure.sev_mode import SevMode
+
+    cmdline = CMDLINE_TEMPLATE_EXEC.format(
+        platform_roothash=platform_roothash, workload_roothash=workload_roothash
+    )
+    digest = guest.calc_launch_digest(
+        SevMode.SEV_SNP,
+        2,
+        vcpu_types.CPU_SIGS["EPYC-v4"],
+        str(BUNDLE_IMAGE_DIR / "OVMF.fd"),
+        str(BUNDLE_IMAGE_DIR / "bzImage"),
+        str(BUNDLE_IMAGE_DIR / "initrd"),
+        cmdline,
+        0x1,  # guest_features: the sev-snp-measure CLI default the nix flake relies on
+        vmm_type=vmm_types.VMMType.QEMU,
+    )
+    return digest.hex()
+
 
 pytestmark = pytest.mark.skipif(
     not (SNP_HOST and SNP_MEASUREMENT),
@@ -104,7 +142,11 @@ def tee_crn_registered(ccn_url) -> None:
     }
     result = subprocess.run(
         ["bash", str(REPO_ROOT / "scripts" / "crn-up.sh"), "--register"],
-        cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=600,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     if result.returncode != 0:
         pytest.fail(
@@ -157,12 +199,16 @@ def _build_runtime_manifest(bundle_ref: str) -> dict:
             "kernel_hashes": True,
             "cpu_models": ["EPYC-v4"],
             "platform_roothash": platform_roothash,
-            "cmdline_template": "console=ttyS0 root=/dev/mapper/verity-root ro roothash={platform_roothash}",
+            "cmdline_template": CMDLINE_TEMPLATE_EXEC,
         },
         "attestation": [
-            {"protocol": "aleph.ra-tls", "version": "1", "transport": {"type": "tcp", "port": 8443}}
+            {
+                "protocol": "aleph.ra-tls",
+                "version": "1",
+                "transport": {"type": "tcp", "port": 8443},
+            }
         ],
-        "workload": {"contract": "aleph.builtin/1", "upstream_port": 8080},
+        "workload": {"contract": "aleph.exec/1", "upstream_port": 8080},
         "source": {
             "repo": "https://github.com/aleph-im/aleph-vm",
             "rev": "testnet",
@@ -172,37 +218,64 @@ def _build_runtime_manifest(bundle_ref: str) -> dict:
 
 
 @pytest.fixture(scope="session")
-def staged_refs(aleph_cli, tmp_path_factory) -> dict:
+def staged_refs(aleph_cli) -> dict:
     """Stage the STOREs the v-program references onto the testnet CCN.
 
-    - bundle:   the exact measured-image tarball CI fetched (57MB), uploaded
-                so the CRN launch path downloads it in-protocol.
-    - manifest: a strict RuntimeManifest pointing at the bundle STORE; this is
-                the message's runtime.ref.
-    - workload/hash_tree: inert placeholders. The message schema requires a
-                workload block and the SCHEDULER resolves every referenced
-                store for disk sizing, so they must exist even though the
-                launch path does not attach them (aleph.builtin/1 serves its
-                built-in workload).
+    - bundle:   the measured platform-image tarball, uploaded so the CRN
+                launch path downloads it in-protocol (runtime.ref -> manifest
+                -> bundle).
+    - manifest: a strict exec-runtime RuntimeManifest pointing at the bundle.
+    - workload/hash_tree: the REAL fib-service dm-verity workload volume
+                (workload.ext4) and its hash tree, staged from the image
+                tarball. The CRN's launch path downloads these as
+                content.workload, attaches them as extra disks, and the guest
+                verity-verifies + execs fib. workload_roothash (read from the
+                staged sidecar) goes into the measured cmdline.
+    - measurement: the per-workload launch digest, computed here so the
+                message's verification.measurements[].digest matches what the
+                guest produces.
     """
     assert BUNDLE_TARBALL.is_file(), f"staged bundle tarball missing: {BUNDLE_TARBALL}"
-    staging = tmp_path_factory.mktemp("vprogram")
+    assert (
+        WORKLOAD_DIR / "workload.ext4"
+    ).is_file(), f"staged workload volume missing: {WORKLOAD_DIR}"
 
-    bundle_ref = _upload_with_balance_retry(aleph_cli, str(BUNDLE_TARBALL), "v-program bundle")
+    bundle_ref = _upload_with_balance_retry(
+        aleph_cli, str(BUNDLE_TARBALL), "v-program bundle"
+    )
 
-    manifest_path = staging / "runtime-manifest.json"
-    manifest_path.write_text(json.dumps(_build_runtime_manifest(bundle_ref)))
-    manifest_ref = _upload_with_balance_retry(aleph_cli, str(manifest_path), "v-program manifest")
+    manifest_json = json.dumps(_build_runtime_manifest(bundle_ref))
+    manifest_path = WORKLOAD_DIR.parent / "runtime-manifest.json"
+    manifest_path.write_text(manifest_json)
+    manifest_ref = _upload_with_balance_retry(
+        aleph_cli, str(manifest_path), "v-program manifest"
+    )
 
-    refs = {"manifest": manifest_ref, "bundle": bundle_ref}
-    for name, payload in (
-        ("workload", b"aleph-testnet v-program placeholder workload\n"),
-        ("hash_tree", b"aleph-testnet v-program placeholder hash tree\n"),
-    ):
-        path = staging / f"{name}.bin"
-        path.write_bytes(payload)
-        refs[name] = _upload_with_balance_retry(aleph_cli, str(path), f"v-program {name}")
-    print(f"[vprogram] staged refs: {refs}")
+    workload_ref = _upload_with_balance_retry(
+        aleph_cli, str(WORKLOAD_DIR / "workload.ext4"), "v-program workload"
+    )
+    hash_tree_ref = _upload_with_balance_retry(
+        aleph_cli,
+        str(WORKLOAD_DIR / "workload.ext4.verity"),
+        "v-program workload hash tree",
+    )
+
+    platform_roothash = (BUNDLE_IMAGE_DIR / "rootfs.ext4.roothash").read_text().strip()
+    workload_roothash = (WORKLOAD_DIR / "workload.ext4.roothash").read_text().strip()
+    measurement = _compute_workload_measurement(platform_roothash, workload_roothash)
+
+    refs = {
+        "manifest": manifest_ref,
+        "bundle": bundle_ref,
+        "workload": workload_ref,
+        "hash_tree": hash_tree_ref,
+        "workload_roothash": workload_roothash,
+        "measurement": measurement,
+    }
+    print(
+        f"[vprogram] staged refs: { {k: v for k, v in refs.items() if k != 'measurement'} }"
+    )
+    print(f"[vprogram] computed workload measurement: {measurement}")
     return refs
 
 
@@ -220,12 +293,12 @@ def build_vprogram_content(address: str, refs: dict) -> dict:
         "resources": {"vcpus": 2, "memory": 2048, "seconds": 30},
         "runtime": {
             "ref": refs["manifest"],
-            "comment": "aleph-snp-attest measured runtime bundle (aleph.builtin/1)",
+            "comment": "aleph-snp-attest exec runtime (fib-service workload)",
         },
         "workload": {
             "ref": refs["workload"],
             "hash_tree": refs["hash_tree"],
-            "roothash": "cdcd" * 16,
+            "roothash": refs["workload_roothash"],
         },
         "verification": {
             "backend": "sev_snp",
@@ -233,7 +306,7 @@ def build_vprogram_content(address: str, refs: dict) -> dict:
             "measurements": [
                 {
                     "platform": "sev_snp",
-                    "digest": SNP_MEASUREMENT,
+                    "digest": refs["measurement"],
                     "vcpu_type": "EPYC-v4",
                 }
             ],
@@ -245,7 +318,9 @@ def build_vprogram_content(address: str, refs: dict) -> dict:
     # volumes: []) must be present in what we submit.
     from aleph_message.models.execution.vprogram import VerifiableProgramContent
 
-    return VerifiableProgramContent(**content).model_dump(mode="json", exclude_none=True)
+    return VerifiableProgramContent(**content).model_dump(
+        mode="json", exclude_none=True
+    )
 
 
 def publish_vprogram(ccn_url: str, private_key: str, content: dict) -> str:
@@ -328,11 +403,19 @@ def test_snp_crn_advertises_vcpu_models(crn_ssh_key):
     )
     tee = (usage.get("properties") or {}).get("tee") or {}
     models = (tee.get("sev_snp") or {}).get("supported_vcpu_types") or []
-    assert "EPYC-v4" in models, f"SNP CRN vcpu models: {models} (usage properties: {usage.get('properties')})"
+    assert (
+        "EPYC-v4" in models
+    ), f"SNP CRN vcpu models: {models} (usage properties: {usage.get('properties')})"
 
 
 def test_vprogram_scheduled_to_snp_crn(
-    ccn_url, private_key, scheduler_api_url, crn_ssh_key, staged_refs, aleph_cli, tee_crn_registered
+    ccn_url,
+    private_key,
+    scheduler_api_url,
+    crn_ssh_key,
+    staged_refs,
+    aleph_cli,
+    tee_crn_registered,
 ):
     test_start = time.time()
     content = build_vprogram_content(_address_of(private_key), staged_refs)
@@ -352,7 +435,9 @@ def test_vprogram_scheduled_to_snp_crn(
         #    (vcpu/TEE eligibility: the DO CRN advertises no tee block).
         assignment = poll(
             "scheduler plan assignment",
-            lambda: _find_assignment(_http_json(f"{scheduler_api_url}/api/v0/plan"), item_hash),
+            lambda: _find_assignment(
+                _http_json(f"{scheduler_api_url}/api/v0/plan"), item_hash
+            ),
             timeout=300,
             interval=10,
         )
@@ -384,7 +469,8 @@ def test_vprogram_scheduled_to_snp_crn(
 
         # It booted as an SEV-SNP confidential guest, not accidentally plain:
         # the daemon stands up a per-tap DHCP server only on the SNP launch
-        # path, and it is the guest's boot-time udhcpc that draws a lease.
+        # path, and it is the guest's boot-time udhcpc that draws a lease. The
+        # log also carries the guest IP we attest against.
         snp_boot = _snp_run(
             crn_ssh_key,
             SNP_HOST,
@@ -398,15 +484,46 @@ def test_vprogram_scheduled_to_snp_crn(
         )
         print(f"[vprogram] booted as SEV-SNP guest: {snp_boot.stdout.strip()[-200:]}")
 
-        # Also confirm the CRN never hit the old not-implemented seam.
-        not_impl = _snp_run(
-            crn_ssh_key,
-            SNP_HOST,
-            f"journalctl -u aleph-vm-agent.service --since '@{int(test_start)}' --no-pager | "
-            f"grep -c 'does not implement the SEV-SNP launch path' || true",
-            timeout=60,
+        guest_ip_match = re.search(r'guest_ip="([0-9.]+)"', snp_boot.stdout)
+        assert (
+            guest_ip_match
+        ), f"could not parse guest_ip from DHCP log: {snp_boot.stdout.strip()}"
+        guest_ip = guest_ip_match.group(1)
+
+        # 4. Attest the workload and run it. The message pinned the per-workload
+        #    measurement (platform + fib workload roothash), so a successful
+        #    attestation proves the exact fib volume was measured into the
+        #    launch. Fetching /fib/10 over the attested channel (the attest-agent
+        #    proxies :8443 -> the workload's :8080) proves fib actually runs.
+        measurement = staged_refs["measurement"]
+        fib_url = f"https://{guest_ip}:8443/fib/10"
+        attest_cmd = (
+            f"{SNP_ATTEST_CLI} attest --url {fib_url} "
+            f"--expected-measurement {measurement} --amd-product {SNP_AMD_PRODUCT}"
         )
-        assert not_impl.stdout.strip() in ("", "0"), "CRN still hit the not-implemented launch seam"
+
+        def attest_ok():
+            r = _snp_run(crn_ssh_key, SNP_HOST, attest_cmd, timeout=120)
+            print(f"[vprogram] attest rc={r.returncode}\n{r.stdout}\n{r.stderr}")
+            return r if r.returncode == 0 else None
+
+        attest = poll(
+            f"aleph-attest-cli attest against {fib_url} (workload-bound measurement)",
+            attest_ok,
+            timeout=420,
+            interval=15,
+        )
+        assert (
+            "Attestation valid: true" in attest.stdout
+        ), f"attest-cli did not report a valid attestation:\n{attest.stdout}"
+        assert (
+            measurement in attest.stdout.replace(" ", "")
+        ), f"attested measurement is not the pinned workload measurement:\n{attest.stdout}"
+        # The attested response body is fib-service's JSON for /fib/10.
+        assert (
+            '"result":55' in attest.stdout.replace(" ", "")
+        ), f"fib-service did not return fib(10)=55 over the attested channel:\n{attest.stdout}"
+        print(f"[vprogram] fib(10)=55 verified over the attested channel at {fib_url}")
     finally:
         forget_vprogram(ccn_url, private_key, item_hash)
 

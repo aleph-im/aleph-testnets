@@ -27,11 +27,20 @@ TEST_PRIVATE_KEY="47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a3492
 
 setup_env() {
     echo "==> Installing Python dependencies..."
-    export PIP_BREAK_SYSTEM_PACKAGES=1
-    pip install "$REPO_ROOT"
+    # A dedicated venv: the harness now pulls aleph-sdk-python, whose
+    # dependency tree upgrades packages the droplet has as Debian-owned
+    # dists (typing_extensions), which system pip cannot uninstall
+    # ("RECORD file not found"). System site-packages stay untouched.
+    if ! python3 -m venv "$REPO_ROOT/.venv" 2>/dev/null; then
+        # Fresh droplets ship python without ensurepip.
+        NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive             apt-get -o DPkg::Lock::Timeout=-1 install -y python3-venv
+        python3 -m venv "$REPO_ROOT/.venv"
+    fi
+    "$REPO_ROOT/.venv/bin/pip" install --quiet --upgrade pip
+    "$REPO_ROOT/.venv/bin/pip" install "$REPO_ROOT"
 
     echo "==> Generating .env from manifesto..."
-    python3 -c "
+    "$REPO_ROOT/.venv/bin/python" -c "
 import yaml
 with open('$REPO_ROOT/manifesto.yml') as f:
     m = yaml.safe_load(f)
@@ -72,7 +81,7 @@ for section in ('components', 'infrastructure'):
     fi
     echo "==> Downloading Aleph CLI..."
     mkdir -p "$BIN_DIR"
-    CLI_URL=$(python3 -c "
+    CLI_URL=$("$REPO_ROOT/.venv/bin/python" -c "
 import yaml
 with open('$REPO_ROOT/manifesto.yml') as f:
     m = yaml.safe_load(f)
@@ -257,12 +266,30 @@ run_tests() {
     for crn_state_dir in "$LOCAL_DIR"/crn/*/; do
         if [ -f "$crn_state_dir/confidential" ] && [ -f "$crn_state_dir/droplet-ip" ]; then
             export ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST="$(cat "$crn_state_dir/droplet-ip")"
+            # SNP host SSH user: root login is disabled on the static SNP server,
+            # so tests/test_vm_snp.py connects as this user and elevates with
+            # sudo. The workflow wrote it next to droplet-ip; default root.
+            if [ -f "$crn_state_dir/ssh-user" ]; then
+                export ALEPH_TESTNET_SNP_USER="$(cat "$crn_state_dir/ssh-user")"
+            fi
             break
         fi
     done
     export ALEPH_TESTNET_CONFIDENTIAL_PASSWORD="${ALEPH_TESTNET_CONFIDENTIAL_PASSWORD:-test-password}"
+
+    # SEV-SNP measured-boot test artifacts (present only when CI prepared them
+    # via scripts/snp-artifacts.sh; tests/test_vm_snp.py skips when the
+    # measurement is unset). The SNP host reuses the confidential-CRN-host
+    # resolution above (ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST) — the static SNP
+    # server carries the `confidential` marker.
+    if [ -f "$LOCAL_DIR/snp/measurement" ]; then
+        export ALEPH_TESTNET_SNP_MEASUREMENT="$(cat "$LOCAL_DIR/snp/measurement")"
+    fi
+    export ALEPH_TESTNET_SNP_IMAGE_HOST_DIR="${ALEPH_TESTNET_SNP_IMAGE_HOST_DIR:-/opt/aleph-snp-image}"
+    export ALEPH_TESTNET_SNP_AMD_PRODUCT="${ALEPH_TESTNET_SNP_AMD_PRODUCT:-Genoa}"
+
     cd "$REPO_ROOT"
-    pytest -v --junitxml=results.xml "$@"
+    "$REPO_ROOT/.venv/bin/python" -m pytest -v --junitxml=results.xml "$@"
 }
 
 dump_logs() {

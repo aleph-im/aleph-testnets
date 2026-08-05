@@ -6,6 +6,7 @@
 #   ./scripts/crn-up.sh --provision        # create DO droplet, wait for SSH
 #   ./scripts/crn-up.sh --install          # install aleph-vm .deb, configure, start
 #   ./scripts/crn-up.sh --register         # register CRN in corechannel aggregate
+#   ./scripts/crn-up.sh --upgrade          # in-place aleph-vm .deb upgrade (keeps config and VMs)
 #   ./scripts/crn-up.sh --status           # check CRN supervisor status
 #   ./scripts/crn-up.sh --destroy          # delete droplet and clean state
 #
@@ -16,7 +17,10 @@
 #   DO_REGION           DigitalOcean region (default: ams3)
 #   DO_SIZE             Droplet size (default: s-8vcpu-16gb)
 #   CRN_COUNT           Number of CRNs to provision (default: 1)
-#   ALEPH_VM_VERSION    Override aleph-vm version from manifesto
+#   ALEPH_VM_VERSION    Override aleph-vm version from manifesto. An explicit
+#                       version wins over the manifesto's `branch:` pin, so a
+#                       baseline release can be installed even when the
+#                       manifesto tracks a branch (used by the upgrade tests).
 #   ALEPH_VM_BRANCH     Deploy from a Git branch instead of a release (uses CI artifacts via gh CLI)
 #
 # CRN /control/allocations auth uses EIP-191 signatures: the scheduler signs
@@ -93,6 +97,13 @@ read_vm_branch() {
         echo "$ALEPH_VM_BRANCH"
         return
     fi
+    # An explicit version override beats the manifesto's branch pin: report
+    # "no branch" so the caller takes the release path. This is how the
+    # upgrade checks install a baseline release on a branch-pinned manifesto.
+    if [ -n "${ALEPH_VM_VERSION:-}" ]; then
+        echo ""
+        return
+    fi
     python3 -c "
 import yaml
 with open('$REPO_ROOT/manifesto.yml') as f:
@@ -108,7 +119,10 @@ fetch_vm_deb_from_branch() {
     local dest="$2"
     local repo="aleph-im/aleph-vm"
     local workflow="build-deb-package-and-integration-tests.yml"
-    local artifact_name="aleph-vm.debian-12.deb"
+    # Distro-matched .deb: the bundled Python native extensions (grpcio/cygrpc,
+    # pydantic_core) only import on the python the deb was built for, so a
+    # non-debian-12 CRN (e.g. an ubuntu-24.04 static SNP host) needs its variant.
+    local artifact_name="aleph-vm.${ALEPH_VM_DEB_VARIANT:-debian-12}.deb"
 
     if ! command -v gh &>/dev/null; then
         echo "ERROR: gh CLI is required to download CI artifacts. Install it from https://cli.github.com/" >&2
@@ -117,31 +131,38 @@ fetch_vm_deb_from_branch() {
 
     echo "==> Fetching .deb artifact for branch '$branch' from CI..."
 
-    local run_id
-    run_id=$(gh run list \
+    # Select the latest run that actually produced the .deb artifact. We do NOT
+    # require the whole run to be "success": the package is built by the
+    # build_deb job, and a downstream e2e-integration job failing (a historically
+    # flaky DO-droplet suite) must not hide a perfectly good deb. Try the most
+    # recent runs in order and take the first that has the artifact.
+    local tmp_dir run_id downloaded=""
+    tmp_dir=$(mktemp -d)
+    for run_id in $(gh run list \
         --repo "$repo" \
         --branch "$branch" \
         --workflow "$workflow" \
-        --status success \
-        --limit 1 \
+        --limit 10 \
         --json databaseId \
-        -q '.[0].databaseId')
+        -q '.[].databaseId'); do
+        echo "    Trying CI run https://github.com/$repo/actions/runs/$run_id ..."
+        if gh run download "$run_id" \
+            --repo "$repo" \
+            --name "$artifact_name" \
+            --dir "$tmp_dir" 2>/dev/null; then
+            downloaded="$run_id"
+            break
+        fi
+    done
 
-    if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
-        echo "ERROR: No successful CI run found for branch '$branch' in $repo" >&2
-        echo "       Make sure the branch has a passing CI run (push to main or open PR)." >&2
+    if [ -z "$downloaded" ]; then
+        echo "ERROR: No CI run for branch '$branch' produced $artifact_name (last 10 runs)." >&2
+        echo "       Ensure the build-deb workflow's 'Build debian-12 Package' job succeeded." >&2
+        rm -rf "$tmp_dir"
         return 1
     fi
 
-    echo "    Found CI run: https://github.com/$repo/actions/runs/$run_id"
-
-    local tmp_dir
-    tmp_dir=$(mktemp -d)
-    gh run download "$run_id" \
-        --repo "$repo" \
-        --name "$artifact_name" \
-        --dir "$tmp_dir"
-
+    echo "    Using deb from run https://github.com/$repo/actions/runs/$downloaded"
     mv "$tmp_dir/$artifact_name" "$dest"
     rm -rf "$tmp_dir"
     echo "    Downloaded $dest"
@@ -251,7 +272,7 @@ provision() {
 
         echo "==> Creating droplet $name ..."
         doctl compute droplet create \
-            --image debian-12-x64 \
+            --image debian-13-x64 \
             --size "$DO_SIZE" \
             --region "$DO_REGION" \
             --ssh-keys "$DO_SSH_KEY_FINGERPRINT" \
@@ -316,18 +337,19 @@ install_crn() {
     echo "==> CRN settings aggregate: $SETTINGS_AGGREGATE_ADDR"
 
     # Determine .deb source: branch (CI artifact) or version (GitHub release).
-    # NB: branch CI artifacts only exist for debian-12; releases ship one .deb
-    # per distro (debian-12/13, ubuntu-22.04/24.04), picked per CRN below —
-    # the bundled Python native extensions only import on the matching distro.
+    # Both the branch build and releases ship one .deb per distro (debian-12/13,
+    # ubuntu-22.04/24.04); the matching variant is picked PER CRN below, because
+    # the bundled Python native extensions (grpcio/cygrpc, pydantic_core) only
+    # import on the python the deb was built for (a debian-12/py3.11 deb breaks
+    # on an ubuntu-24.04/py3.12 static SNP host).
     local branch
     branch=$(read_vm_branch)
     local local_deb=""
     local version=""
 
     if [ -n "$branch" ]; then
-        local_deb="$LOCAL_DIR/aleph-vm.debian-12.deb"
         mkdir -p "$LOCAL_DIR"
-        fetch_vm_deb_from_branch "$branch" "$local_deb"
+        echo "==> aleph-vm branch: $branch (deb fetched per-CRN by distro)"
         echo "    vm-connector: $connector_image"
         echo "    CCN: $CCN_URL"
     else
@@ -338,6 +360,13 @@ install_crn() {
     fi
 
     for idx in $(seq 0 $((CRN_COUNT - 1))); do
+        # CRN_ONLY_INDEX scopes --install to a single CRN, leaving the others
+        # untouched. The upgrade-checks workflow uses it to install the CANDIDATE
+        # branch deb on just the static SNP (TEE) CRN, without re-touching the
+        # DO CRNs that already carry their baseline release.
+        if [ -n "${CRN_ONLY_INDEX:-}" ] && [ "$idx" != "$CRN_ONLY_INDEX" ]; then
+            continue
+        fi
         local ip
         ip=$(crn_ip "$idx")
         echo ""
@@ -437,17 +466,22 @@ EOF
         ssh_crn "$idx" "docker rm -f vm-connector 2>/dev/null || true"
         ssh_crn "$idx" "docker run -d -p 127.0.0.1:4021:4021/tcp --restart=always --name vm-connector $connector_image"
 
-        # Download/upload and install .deb
-        if [ -n "$local_deb" ]; then
-            echo "    Uploading aleph-vm .deb..."
-            scp_to_crn "$idx" "$local_deb"
-            ssh_crn "$idx" "mv /tmp/$(basename "$local_deb") /opt/aleph-vm.deb"
+        # Download/upload and install the .deb matching THIS CRN's distro (a
+        # static TEE server may run ubuntu-24.04 while the DO droplets run
+        # debian-12; the bundled Python native extensions only import on the
+        # deb's own python).
+        local deb_variant
+        deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
+        deb_variant="${deb_variant:-debian-13}"
+        if [ -n "$branch" ]; then
+            local branch_deb="$LOCAL_DIR/aleph-vm.${deb_variant}.deb"
+            if [ ! -f "$branch_deb" ]; then
+                ALEPH_VM_DEB_VARIANT="$deb_variant" fetch_vm_deb_from_branch "$branch" "$branch_deb"
+            fi
+            echo "    Uploading aleph-vm .deb (${deb_variant})..."
+            scp_to_crn "$idx" "$branch_deb"
+            ssh_crn "$idx" "mv /tmp/$(basename "$branch_deb") /opt/aleph-vm.deb"
         else
-            # Pick the release .deb matching this CRN's distro (e.g. a static
-            # TEE server may not run debian-12 like the DO droplets do).
-            local deb_variant
-            deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
-            deb_variant="${deb_variant:-debian-12}"
             local deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.${deb_variant}.deb"
             echo "    Downloading aleph-vm ${version} (${deb_variant})..."
             ssh_crn "$idx" "wget -q -O /opt/aleph-vm.deb '$deb_url'"
@@ -484,8 +518,154 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# In-place upgrade: install another aleph-vm .deb on already-installed CRNs
+# ---------------------------------------------------------------------------
+# Second phase of the two-phase install used by the upgrade checks
+# (tests/test_vm_upgrade.py): --install deploys a baseline (e.g. the latest
+# release via ALEPH_VM_VERSION), then --upgrade installs the candidate .deb
+# resolved from ALEPH_VM_BRANCH / ALEPH_VM_VERSION / the manifesto, reusing
+# the same artifact-download code. Unlike --install it touches nothing else:
+# no supervisor.env rewrite, no vm-connector restart, no base packages. The
+# deb's own preinst/postinst restart the supervisor; persistent VMs live in
+# their own aleph-vm-controller@ systemd units and must survive.
+#
+# Iterates over all CRN state dirs (like --destroy) and skips static CRNs:
+# a shared static server is not ours to upgrade mid-run.
+#
+# Strict by design: any CRN that does not come back (supervisor unit active
+# AND HTTP API answering on :4020) fails the whole command, because the tests
+# rely on this exit code.
+upgrade_crn() {
+    if [ ! -d "$LOCAL_DIR/crn" ]; then
+        echo "ERROR: no CRN state in $LOCAL_DIR/crn. Run --provision/--install first" >&2
+        echo "       (or, in CI, let the workflow write .local/crn/<idx>/droplet-ip)." >&2
+        exit 1
+    fi
+
+    # Resolve the target .deb source: branch CI artifact or release, same
+    # rules as --install (env overrides beat the manifesto; an explicit
+    # version beats a manifesto branch pin). The branch .deb itself is
+    # fetched inside the per-CRN loop: the bundled native extensions only
+    # import on the python they were built for, so each CRN needs the
+    # variant matching its own distro (cached per variant across CRNs).
+    local branch version=""
+    branch=$(read_vm_branch)
+    if [ -n "$branch" ]; then
+        mkdir -p "$LOCAL_DIR"
+        echo "==> Upgrading CRNs to aleph-vm branch '$branch'"
+    else
+        version=$(read_vm_version)
+        echo "==> Upgrading CRNs to aleph-vm release $version"
+    fi
+
+    local failures=0
+    for dir in "$LOCAL_DIR/crn"/*/; do
+        [ -d "$dir" ] || continue
+        local idx
+        idx=$(basename "$dir")
+        if crn_is_static "$idx"; then
+            echo "==> CRN $idx is static, skipping upgrade."
+            continue
+        fi
+        if [ ! -f "$dir/droplet-ip" ]; then
+            echo "==> CRN $idx has no droplet-ip, skipping."
+            continue
+        fi
+        local ip
+        ip=$(crn_ip "$idx")
+        echo ""
+        echo "==> Upgrading CRN $idx ($ip) ..."
+        echo "    aleph-vm before: $(ssh_crn "$idx" "dpkg-query -W -f='\${Version}' aleph-vm" 2>/dev/null || echo "not installed")"
+
+        local deb_variant
+        deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
+        deb_variant="${deb_variant:-debian-13}"
+        if [ -n "$branch" ]; then
+            local local_deb="$LOCAL_DIR/aleph-vm-upgrade.${deb_variant}.deb"
+            if [ ! -f "$local_deb" ]; then
+                ALEPH_VM_DEB_VARIANT="$deb_variant" fetch_vm_deb_from_branch "$branch" "$local_deb"
+            fi
+            scp_to_crn "$idx" "$local_deb"
+            ssh_crn "$idx" "mv /tmp/$(basename "$local_deb") /opt/aleph-vm-upgrade.deb"
+        else
+            local deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.${deb_variant}.deb"
+            echo "    Downloading aleph-vm ${version} (${deb_variant})..."
+            ssh_crn "$idx" "wget -q -O /opt/aleph-vm-upgrade.deb '$deb_url'"
+        fi
+
+        # --force-confold keeps /etc/aleph-vm/supervisor.env; --reinstall and
+        # --allow-downgrades for the same reasons as --install (identical or
+        # lower version strings must still (re)install).
+        echo "    Installing .deb..."
+        local upgrade_ts
+        upgrade_ts=$(ssh_crn "$idx" "date -u '+%Y-%m-%d %H:%M:%S'")
+        ssh_crn "$idx" "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 -o Dpkg::Options::=--force-confold install --reinstall --allow-downgrades -y /opt/aleph-vm-upgrade.deb"
+        echo "    aleph-vm after:  $(ssh_crn "$idx" "dpkg-query -W -f='\${Version}' aleph-vm" 2>/dev/null || echo "unknown")"
+
+        # Wait until the node serves traffic again: supervisor unit active and
+        # the CRN HTTP API answering (on split-package debs the HTTP API lives
+        # in a separate aleph-vm-agent unit; probing :4020 covers both layouts).
+        echo "    Waiting for CRN to come back..."
+        local ready=false
+        for _ in $(seq 1 30); do
+            if ssh_crn "$idx" "systemctl is-active aleph-vm-supervisor.service" 2>/dev/null | grep -q "^active$" \
+                && ssh_crn "$idx" "curl -sf -o /dev/null http://localhost:4020/about/usage/system" 2>/dev/null; then
+                ready=true
+                break
+            fi
+            sleep 5
+        done
+
+        if $ready; then
+            # The daemon restarted during the deb install; a scheduler poll
+            # in that window marks the node Unreachable and nothing but the
+            # next successful poll clears it. Tests dispatch new VMs right
+            # after --upgrade returns, so wait for that poll here.
+            echo "    Waiting for a successful scheduler poll..."
+            if ! wait_for_scheduler_poll "$idx" "$upgrade_ts"; then
+                echo "    WARNING: no successful scheduler poll observed within 180s." >&2
+            fi
+            echo "    CRN $idx upgraded and serving on $ip"
+        else
+            echo "ERROR: CRN $idx did not come back after upgrade (150s)" >&2
+            ssh_crn "$idx" "systemctl status aleph-vm-supervisor.service --no-pager" || true
+            ssh_crn "$idx" "systemctl status aleph-vm-agent.service --no-pager" 2>/dev/null || true
+            ssh_crn "$idx" "journalctl -u aleph-vm-supervisor.service --no-pager -n 100" || true
+            failures=$((failures + 1))
+        fi
+    done
+
+    echo ""
+    if [ "$failures" -gt 0 ]; then
+        echo "ERROR: $failures CRN(s) failed to upgrade." >&2
+        exit 1
+    fi
+    echo "==> All CRNs upgraded."
+}
+
+# ---------------------------------------------------------------------------
 # Phase 3: Register CRN in corechannel aggregate
 # ---------------------------------------------------------------------------
+# Wait until the scheduler has successfully polled this CRN's /status/config
+# after $2 (a "+%Y-%m-%d %H:%M:%S" UTC timestamp on the CRN's clock). The
+# scheduler's node watcher polls every 30s but has no reschedule trigger for
+# an unreachable node becoming reachable, so a VM message arriving while the
+# node snapshot still says Unreachable stays unscheduled until unrelated
+# churn (run 28823959954 wedged this way). A logged 200 proves the snapshot
+# is healthy before the tests start creating VMs.
+wait_for_scheduler_poll() {
+    local idx="$1" since_ts="$2"
+    for _ in $(seq 1 36); do
+        # Both units: pre-split debs serve the HTTP API from the supervisor,
+        # split-package debs from the agent.
+        if ssh_crn "$idx" "journalctl -u aleph-vm-supervisor.service -u aleph-vm-agent.service --since '$since_ts' --no-pager 2>/dev/null | grep 'GET /status/config' | grep -q ' 200 '"; then
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+
 register_crn() {
     : "${CCN_URL:?CCN_URL must be set (e.g. http://1.2.3.4:4024)}"
 
@@ -545,6 +725,13 @@ register_crn() {
     fi
 
     for idx in $(seq 0 $((CRN_COUNT - 1))); do
+        # CRN_ONLY_INDEX scopes --register to a single CRN, like --install:
+        # the TEE CRN is registered in its own workflow step, after the DO
+        # CRNs were already registered.
+        if [ -n "${CRN_ONLY_INDEX:-}" ] && [ "$idx" != "$CRN_ONLY_INDEX" ]; then
+            echo "==> CRN $idx: skipping registration (CRN_ONLY_INDEX=$CRN_ONLY_INDEX)"
+            continue
+        fi
         local ip
         ip=$(crn_ip "$idx")
         local crn_name_str="testnet-crn-$idx"
@@ -591,6 +778,36 @@ register_crn() {
         echo "    CRN hash: $crn_hash"
         echo "$crn_hash" > "$(crn_dir "$idx")/crn-hash"
 
+        # Update supervisor.env with node hash and restart BEFORE linking.
+        # Linking (staking) is what makes the scheduler start polling this
+        # node, and its node watcher has no reschedule trigger for an
+        # unreachable node becoming reachable: a first poll landing in the
+        # restart window wedges every unscheduled VM until unrelated churn
+        # arrives (run 28823959954). Restart first, wait for the API, then
+        # stake a node that is already serving.
+        echo "    Setting ALEPH_VM_NODE_HASH on CRN..."
+        ssh_crn "$idx" "grep -q ALEPH_VM_NODE_HASH /etc/aleph-vm/supervisor.env && \
+            sed -i 's/^ALEPH_VM_NODE_HASH=.*/ALEPH_VM_NODE_HASH=$crn_hash/' /etc/aleph-vm/supervisor.env || \
+            echo 'ALEPH_VM_NODE_HASH=$crn_hash' >> /etc/aleph-vm/supervisor.env"
+        local restart_ts
+        restart_ts=$(ssh_crn "$idx" "date -u '+%Y-%m-%d %H:%M:%S'")
+        ssh_crn "$idx" "systemctl restart aleph-vm-supervisor.service"
+
+        echo "    Waiting for the CRN API to answer..."
+        local serving=false
+        for _ in $(seq 1 30); do
+            if ssh_crn "$idx" "curl -sf -o /dev/null http://localhost:4020/about/usage/system" 2>/dev/null; then
+                serving=true
+                break
+            fi
+            sleep 5
+        done
+        if ! $serving; then
+            echo "    ERROR: CRN API did not come back within 150s of the restart." >&2
+            ssh_crn "$idx" "journalctl -u aleph-vm-supervisor.service --no-pager -n 50" || true
+            continue
+        fi
+
         # Link CRN to CCN
         echo "    Linking CRN to CCN..."
         ALEPH_PRIVATE_KEY="$CRN_OWNER_KEY" "$aleph_cli" \
@@ -599,12 +816,15 @@ register_crn() {
             echo "    WARNING: link failed: $(cat "$err_log")"
         }
 
-        # Update supervisor.env with node hash
-        echo "    Setting ALEPH_VM_NODE_HASH on CRN..."
-        ssh_crn "$idx" "grep -q ALEPH_VM_NODE_HASH /etc/aleph-vm/supervisor.env && \
-            sed -i 's/^ALEPH_VM_NODE_HASH=.*/ALEPH_VM_NODE_HASH=$crn_hash/' /etc/aleph-vm/supervisor.env || \
-            echo 'ALEPH_VM_NODE_HASH=$crn_hash' >> /etc/aleph-vm/supervisor.env"
-        ssh_crn "$idx" "systemctl restart aleph-vm-supervisor.service"
+        # Polling may have started before the restart above (the node enters
+        # the registry at create-crn); do not return until the scheduler has
+        # seen this CRN healthy, or the first dispatched VM can wedge.
+        echo "    Waiting for a successful scheduler poll..."
+        if wait_for_scheduler_poll "$idx" "$restart_ts"; then
+            echo "    Scheduler sees CRN $idx as healthy."
+        else
+            echo "    WARNING: no successful scheduler poll observed within 180s." >&2
+        fi
 
         echo "    CRN $crn_name_str registered and linked."
     done
@@ -690,6 +910,9 @@ case "${1:-}" in
     --register)
         register_crn
         ;;
+    --upgrade)
+        upgrade_crn
+        ;;
     --status)
         status_crn
         ;;
@@ -702,11 +925,11 @@ case "${1:-}" in
         register_crn
         ;;
     --help|-h)
-        echo "Usage: $0 [--provision|--install|--register|--status|--destroy]"
+        echo "Usage: $0 [--provision|--install|--register|--upgrade|--status|--destroy]"
         exit 0
         ;;
     *)
-        echo "Usage: $0 [--provision|--install|--register|--status|--destroy]"
+        echo "Usage: $0 [--provision|--install|--register|--upgrade|--status|--destroy]"
         exit 1
         ;;
 esac

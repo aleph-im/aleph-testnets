@@ -4,10 +4,8 @@ SSH reaches the VM over the CRN's IPv4 + the host-side mapped port reported by
 `instance show --verbose` (`mapped_ports`). The CLI's own `instance ssh` uses
 the VM's IPv6, which is not reachable in this CI.
 """
-import json
 import subprocess
 import time
-import urllib.request
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -96,8 +94,8 @@ def wait_for_dispatched(aleph_cli, vm_hash, timeout=300, *, different_from=None,
     """Poll `instance show --verbose` until the VM is dispatched with the named
     host-side mapped port present. If `different_from` is set, also require the
     allocated node hash to differ (used to detect post-unlink migration).
-    `required_port=None` waits for placement only — confidential VMs are placed
-    before they start, and ports are only mapped after secret injection."""
+    `required_port=None` waits for placement only (ports may be mapped later,
+    e.g. only after a VM actually starts)."""
     def fetch():
         data = aleph_cli(
             "instance", "show", vm_hash, "--verbose",
@@ -123,34 +121,6 @@ def wait_for_dispatched(aleph_cli, vm_hash, timeout=300, *, different_from=None,
     return poll(label, fetch, timeout=timeout)
 
 
-def wait_for_scheduler_observed(scheduler_api_url, vm_hash, node_hash, timeout=120, interval=5):
-    """Poll scheduler-api until it has *observed* the VM running on `node_hash`
-    (the node appears in the VM's `observed_nodes`).
-
-    This is the precondition the dispatcher's migrate-vs-cold-start decision
-    reads: scheduler-rs `observed_nodes_of(vm)` is backed by the same
-    node_watcher poll that fills `observed_nodes` here. Unlinking a CRN before
-    the scheduler has observed the VM on it races a known scheduler bug — the
-    reschedule sees the VM running nowhere (`observed == []`) and *cold-starts*
-    it on the new node, discarding disk state, instead of migrating. Gating the
-    unlink on observation makes the state-preserving migration path
-    deterministic. The window is short (one poll interval after first boot)."""
-    url = f"{scheduler_api_url.rstrip('/')}/api/v1/vms/{vm_hash}"
-
-    def fetch():
-        try:
-            data = json.loads(urllib.request.urlopen(url, timeout=10).read())
-        except Exception:
-            return None  # 404 until the scheduler ingests the instance message
-        observed = data.get("observed_nodes") or []
-        return data if node_hash in observed else None
-
-    return poll(
-        f"scheduler observed VM {vm_hash[:12]} on node {node_hash[:12]}",
-        fetch, timeout=timeout, interval=interval,
-    )
-
-
 @dataclass
 class DispatchedVM:
     """A dispatched VM's reachable coordinates. Mutable: `refresh` re-reads
@@ -173,9 +143,9 @@ def delete_instance(aleph_cli, vm_hash):
     CRN frees the VM's resources. Meant for test/fixture teardown: it never fails
     the test (`check=False`).
 
-    Cleaning up is not optional hygiene here — leaked VMs occupy CRN capacity, and
-    the migration test needs a free CRN to migrate onto. Every instance-creating
-    test must call this so capacity can't creep up as the suite grows.
+    Cleaning up is not optional hygiene here: leaked VMs occupy CRN capacity.
+    Every instance-creating test must call this so capacity can't creep up as
+    the suite grows.
 
     -y is required: without it the CLI prompts for confirmation, and on the CI's
     non-TTY stdin that reads EOF and silently aborts the FORGET.

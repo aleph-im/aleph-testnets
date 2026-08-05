@@ -65,33 +65,60 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # Aleph native-storage file hash (= sha256) of the image+attest-cli
-      # tarball. STORE message 87287e4a5c8d7554a50f982cd681b64b2600c0bbb1c0b1e618465e022e01b977;
-      # image measurement de933c37... (D4 tip: D2 DHCP + D3 chroot DNS/secrets
-      # + D4 shellcheck directives; EPYC-v4, 2 vCPU). Immutable.
-      SNP_IMAGE_HASH: 14656e922cf795d99b6af2f5a83ff0ab4827763792b46965738094b1fb0355e7
+      # Each artifact is pinned by its Aleph native-storage file hash (= sha256).
+      # Immutable + content-addressed, so CI fetches in seconds instead of
+      # compiling the musl toolchain + kernel (~2.5h). To refresh after an image
+      # change: rebuild, repackage the platform bundle with the CANONICAL tooling
+      # `python scripts/vprogram_bundle.py build` (NOT a hand-rolled tar),
+      # `aleph file upload` each file, and bump the hash below.
+      #
+      # Production-faithful split (the platform bundle is platform-only, exactly
+      # as a real V-PROGRAM's runtime.ref -> manifest -> bundle resolves; the
+      # fib workload is separate STOREs, exactly as content.workload.ref /
+      # .hash_tree resolve; attest-cli is a client tool, not part of any bundle):
+      #
+      #   SNP_IMAGE_HASH        canonical platform bundle (snp-image.tar.gz:
+      #                         image/ members only), measurement d8665701...
+      #   SNP_WORKLOAD_HASH     fib-service dm-verity data volume (workload.ext4)
+      #   SNP_WORKLOAD_VERITY_HASH  its hash tree (workload.ext4.verity)
+      #   SNP_ATTEST_CLI_HASH   aleph-attest-cli client verifier binary
+      #   SNP_WORKLOAD_ROOTHASH reproducible workload dm-verity roothash (pinned;
+      #                         asserted by the guest + the computed measurement)
+      SNP_IMAGE_HASH: 988a363bf2bfff3df9788330a4baa5302fd6ad3286157ba4ecefadef06d43d06
+      SNP_WORKLOAD_HASH: 5a04d7949c488acbd909d2a63190fc9810d0d61263274c294b714625f8193db0
+      SNP_WORKLOAD_VERITY_HASH: 5afce89cd3be54c6f65b4d964e0892582c15f2595ddb3216fc2f839d06fcf64d
+      SNP_ATTEST_CLI_HASH: f928bff3212e9e0f89f98706b753c63539aeaca3cc8fac53c9b524eb73b05f3c
+      SNP_WORKLOAD_ROOTHASH: 1fe2475cb4901e40f891c8801e1c28233c1f563baa8640a42648191cafbac250
       SNP_IMAGE_GATEWAY: https://official.aleph.cloud
     steps:
-      - name: Fetch measured image + attest-cli from Aleph
+      - name: Fetch measured image, workload + attest-cli from Aleph
         run: |
           set -euo pipefail
-          url="${SNP_IMAGE_GATEWAY}/api/v0/storage/raw/${SNP_IMAGE_HASH}"
-          echo "Fetching $url"
-          curl -fsSL --retry 5 --retry-delay 10 --max-time 300 "$url" -o snp-image.tar.gz
-          echo "${SNP_IMAGE_HASH}  snp-image.tar.gz" | sha256sum -c -
-          # Tarball layout: image/ (bzImage, initrd, rootfs.ext4[.verity/.roothash],
-          # OVMF.fd, measurement.hex) + aleph-attest-cli. Stage into
-          # snp-artifacts/{image,bin} so the download in upgrade-checks lands at
-          # .local/snp/{image,bin} (what snp-artifacts.sh reads).
-          mkdir -p snp-artifacts/bin
-          tar xzf snp-image.tar.gz -C snp-artifacts
-          mv snp-artifacts/aleph-attest-cli snp-artifacts/bin/aleph-attest-cli
-          chmod +x snp-artifacts/bin/aleph-attest-cli
-          echo "Measured image measurement: $(cat snp-artifacts/image/measurement.hex)"
-          # Preserve the raw bundle tarball: the V-PROGRAM scenario uploads it
-          # to the testnet CCN as the runtime bundle STORE so the CRN fetches
-          # it in-protocol (sha256 == SNP_IMAGE_HASH == the manifest's sha256).
+          gw="${SNP_IMAGE_GATEWAY}/api/v0/storage/raw"
+          fetch() { # <hash> <dest>
+            echo "Fetching $1 -> $2"
+            curl -fsSL --retry 5 --retry-delay 10 --max-time 300 "$gw/$1" -o "$2"
+            echo "$1  $2" | sha256sum -c -
+          }
+          mkdir -p snp-artifacts/bin snp-artifacts/workload
+          # 1. Canonical platform bundle -> image/. This IS bundle.tar.gz: the
+          #    V-PROGRAM scenario re-uploads it to the testnet CCN as the runtime
+          #    bundle STORE (sha256 == SNP_IMAGE_HASH == the manifest's sha256),
+          #    so the CRN fetches it in-protocol.
+          fetch "${SNP_IMAGE_HASH}" snp-image.tar.gz
+          tar xzf snp-image.tar.gz -C snp-artifacts   # -> snp-artifacts/image/
           cp snp-image.tar.gz snp-artifacts/bundle.tar.gz
+          echo "Measured image measurement: $(cat snp-artifacts/image/measurement.hex)"
+          # 2. Client attest-cli (not in any bundle) -> bin/.
+          fetch "${SNP_ATTEST_CLI_HASH}" snp-artifacts/bin/aleph-attest-cli
+          chmod +x snp-artifacts/bin/aleph-attest-cli
+          # 3. fib workload volume + hash tree as separate STOREs (production
+          #    content.workload.ref / .hash_tree), staged into workload/. The
+          #    roothash is pinned (reproducible) and materialized as the sidecar
+          #    the harness reads for the measured cmdline + measurement.
+          fetch "${SNP_WORKLOAD_HASH}" snp-artifacts/workload/workload.ext4
+          fetch "${SNP_WORKLOAD_VERITY_HASH}" snp-artifacts/workload/workload.ext4.verity
+          echo "${SNP_WORKLOAD_ROOTHASH}" > snp-artifacts/workload/workload.ext4.roothash
 
       - name: Upload SNP image artifact
         uses: actions/upload-artifact@v4

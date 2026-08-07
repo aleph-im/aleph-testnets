@@ -101,14 +101,16 @@ print(m['components']['aleph-vm'].get('branch', ''))
 "
 }
 
-# Download aleph-vm .deb from GitHub Actions CI artifacts for a given branch.
-# Requires the gh CLI to be installed and authenticated.
+# Download aleph-vm .deb from GitHub Actions CI artifacts for a given branch
+# and distro variant (e.g. ubuntu-24.04). Requires the gh CLI to be installed
+# and authenticated.
 fetch_vm_deb_from_branch() {
     local branch="$1"
-    local dest="$2"
+    local variant="$2"
+    local dest="$3"
     local repo="aleph-im/aleph-vm"
     local workflow="build-deb-package-and-integration-tests.yml"
-    local artifact_name="aleph-vm.debian-12.deb"
+    local artifact_name="aleph-vm.${variant}.deb"
 
     if ! command -v gh &>/dev/null; then
         echo "ERROR: gh CLI is required to download CI artifacts. Install it from https://cli.github.com/" >&2
@@ -251,7 +253,7 @@ provision() {
 
         echo "==> Creating droplet $name ..."
         doctl compute droplet create \
-            --image debian-12-x64 \
+            --image ubuntu-24-04-x64 \
             --size "$DO_SIZE" \
             --region "$DO_REGION" \
             --ssh-keys "$DO_SSH_KEY_FINGERPRINT" \
@@ -316,18 +318,15 @@ install_crn() {
     echo "==> CRN settings aggregate: $SETTINGS_AGGREGATE_ADDR"
 
     # Determine .deb source: branch (CI artifact) or version (GitHub release).
-    # NB: branch CI artifacts only exist for debian-12; releases ship one .deb
-    # per distro (debian-12/13, ubuntu-22.04/24.04), picked per CRN below —
-    # the bundled Python native extensions only import on the matching distro.
+    # Both ship one .deb per distro (debian-12/13, ubuntu-22.04/24.04), picked
+    # per CRN below: the bundled Python native extensions only import on the
+    # matching distro.
     local branch
     branch=$(read_vm_branch)
-    local local_deb=""
     local version=""
 
     if [ -n "$branch" ]; then
-        local_deb="$LOCAL_DIR/aleph-vm.debian-12.deb"
-        mkdir -p "$LOCAL_DIR"
-        fetch_vm_deb_from_branch "$branch" "$local_deb"
+        echo "==> aleph-vm branch: $branch"
         echo "    vm-connector: $connector_image"
         echo "    CCN: $CCN_URL"
     else
@@ -437,17 +436,22 @@ EOF
         ssh_crn "$idx" "docker rm -f vm-connector 2>/dev/null || true"
         ssh_crn "$idx" "docker run -d -p 127.0.0.1:4021:4021/tcp --restart=always --name vm-connector $connector_image"
 
-        # Download/upload and install .deb
-        if [ -n "$local_deb" ]; then
-            echo "    Uploading aleph-vm .deb..."
+        # Download/upload the .deb matching this CRN's distro (e.g. a static
+        # TEE server may not run ubuntu-24.04 like the DO droplets do).
+        local deb_variant
+        deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
+        deb_variant="${deb_variant:-ubuntu-24.04}"
+        if [ -n "$branch" ]; then
+            # CI artifact for this variant, cached across CRNs of the same distro.
+            local local_deb="$LOCAL_DIR/aleph-vm.${deb_variant}.deb"
+            if [ ! -f "$local_deb" ]; then
+                mkdir -p "$LOCAL_DIR"
+                fetch_vm_deb_from_branch "$branch" "$deb_variant" "$local_deb"
+            fi
+            echo "    Uploading aleph-vm .deb (${deb_variant})..."
             scp_to_crn "$idx" "$local_deb"
             ssh_crn "$idx" "mv /tmp/$(basename "$local_deb") /opt/aleph-vm.deb"
         else
-            # Pick the release .deb matching this CRN's distro (e.g. a static
-            # TEE server may not run debian-12 like the DO droplets do).
-            local deb_variant
-            deb_variant=$(ssh_crn "$idx" '. /etc/os-release && echo "${ID}-${VERSION_ID}"' 2>/dev/null || true)
-            deb_variant="${deb_variant:-debian-12}"
             local deb_url="https://github.com/aleph-im/aleph-vm/releases/download/${version}/aleph-vm.${deb_variant}.deb"
             echo "    Downloading aleph-vm ${version} (${deb_variant})..."
             ssh_crn "$idx" "wget -q -O /opt/aleph-vm.deb '$deb_url'"

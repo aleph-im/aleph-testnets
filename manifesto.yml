@@ -16,10 +16,12 @@ components:
     tag: "0.1.5"
 
   aleph-cli:
-    # 0.17.0-rc1 carries the vprogram command set (create/show/call with
-    # RA-TLS attestation verification).
-    version: "0.17.0-rc1"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc1/aleph-cli-linux-x86_64"
+    # 0.17.0-rc2: vprogram command set (create/show/call with RA-TLS
+    # attestation verification), plus create --wait polling for the attested
+    # endpoint (aleph-rs#318) and named attestation-rejection errors
+    # (aleph-rs#319).
+    version: "0.17.0-rc2"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc2/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer

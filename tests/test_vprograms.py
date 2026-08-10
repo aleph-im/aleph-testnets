@@ -33,24 +33,6 @@ def _vprogram_message(objs: list[dict]) -> dict:
     raise AssertionError(f"no V-PROGRAM message in CLI output: {objs}")
 
 
-def _endpoint_via_show(aleph_cli, item_hash: str, timeout: float) -> str | None:
-    """Poll `vprogram show` until the attested endpoint resolves.
-
-    TODO(aleph-rs#318): remove once the pinned CLI carries the --wait fix.
-    The rc1 CLI samples the endpoint exactly once at readiness, before the
-    CRN maps the attestation port (which happens only after the SNP guest
-    finishes its measured boot), so create's payload reports null even
-    though the endpoint comes up shortly after."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        shown = aleph_cli("vprogram", "show", item_hash, parse_json=True)
-        endpoint = shown.get("attested_endpoint")
-        if endpoint:
-            return endpoint
-        time.sleep(10)
-    return None
-
-
 def test_vprogram_deploy_and_attested_call(
     aleph_cli, vprogram_dir, vprogram_runtime_hash, confidential_crn_host
 ):
@@ -74,9 +56,9 @@ def test_vprogram_deploy_and_attested_call(
     assert ready.get("ready") is True, (
         f"V-PROGRAM {item_hash} not reachable within {CREATE_WAIT_SECS}s: {ready}"
     )
+    # rc2's create --wait polls for the endpoint within the wait budget
+    # (aleph-rs#318), so a ready payload without one is a real failure.
     endpoint = ready.get("attested_endpoint")
-    if not endpoint:
-        endpoint = _endpoint_via_show(aleph_cli, item_hash, timeout=600)
     assert endpoint, (
         "V-PROGRAM is running but no attested endpoint was resolved — "
         "is the CRN mapping the :8443 attestation port (aleph-vm#1079)?"
@@ -109,10 +91,9 @@ def test_vprogram_deploy_and_attested_call(
         if curl_probe is None:
             # Transport ground truth, captured in the same seconds the CLI
             # fails: a raw TLS request with NO attestation verification.
-            # 200 here + a CLI failure means the RA-TLS verifier rejected
-            # the handshake (the CLI's 'error sending request' hides that
-            # verdict until aleph-rs#319 ships); a curl failure means the
-            # endpoint genuinely is not reachable.
+            # 200 here + a CLI failure isolates the failure to attestation
+            # itself (whose reason the rc2 CLI names via aleph-rs#319);
+            # a curl failure means the endpoint genuinely is not reachable.
             probe_url = endpoint.rstrip("/") + "/health"
             p = subprocess.run(
                 ["curl", "-ks", "-o", "/dev/null", "-w", "%{http_code}", probe_url],

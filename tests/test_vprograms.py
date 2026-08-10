@@ -93,10 +93,23 @@ def test_vprogram_deploy_and_attested_call(
 
     # Attested calls: the response body is only ever printed after the full
     # RA-TLS verification (report chain, key binding, measurement pin).
-    health = aleph_cli(
-        "vprogram", "call", item_hash, "/health", check=False, timeout=120
-    )
-    assert health.returncode == 0, f"attested /health call failed: {(health.stderr or '')[-1000:]}"
+    # The attestation port is mapped as soon as the VM reaches RUNNING, a few
+    # seconds before the guest's attest agent binds :8443 (run 31382627461:
+    # call at 11:46:49, guest bind at 11:46:52), so retry transport-level
+    # failures briefly. Verification failures still fail fast.
+    deadline = time.time() + 120
+    while True:
+        health = aleph_cli(
+            "vprogram", "call", item_hash, "/health", check=False, timeout=120
+        )
+        if health.returncode == 0:
+            break
+        transient = "error sending request" in (health.stderr or "")
+        if not transient or time.time() >= deadline:
+            raise AssertionError(
+                f"attested /health call failed: {(health.stderr or '')[-1000:]}"
+            )
+        time.sleep(5)
     assert json.loads(health.stdout)["status"] == "ok"
 
     fib = aleph_cli("vprogram", "call", item_hash, "/fib/10", check=False, timeout=120)

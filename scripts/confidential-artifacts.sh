@@ -70,14 +70,37 @@ BASE_IMAGE_URL="https://cloud.debian.org/images/cloud/bookworm/20240717-1811/deb
 IMAGE_SIZE="3GB"
 CACHE_DIR="/opt/aleph-ci-cache"
 
-SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$SSH_KEY_FILE")
+# Fresh droplets intermittently reset SSH connections mid-handshake
+# (kex_exchange_identification: Connection reset by peer). Same mitigation
+# as crn-up.sh:
+#  - ControlMaster multiplexing: one TCP connection per host, reused by all
+#    ssh/scp calls, so only the first connection is exposed to the flake.
+#  - retry_255: retry connection-level failures (ssh/scp exit code 255).
+#    The remote commands used here are idempotent, so re-running is safe.
+SSH_OPTS=(
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    -o ControlMaster=auto -o ControlPath=/tmp/ssh-cm-ca-%r@%h-%p -o ControlPersist=600
+    -i "$SSH_KEY_FILE"
+)
+
+retry_255() {
+    local attempt rc
+    for attempt in 1 2 3 4 5; do
+        "$@" && return 0
+        rc=$?
+        [ "$rc" -ne 255 ] && return "$rc"
+        echo "    SSH connection failed (attempt $attempt/5), retrying in 5s ..." >&2
+        sleep 5
+    done
+    return 255
+}
 
 tee_ssh() {
     local cmd="$1"
     if [ "$TEE_USER" = "root" ]; then
-        ssh "${SSH_OPTS[@]}" "root@$TEE_HOST" "$cmd"
+        retry_255 ssh "${SSH_OPTS[@]}" "root@$TEE_HOST" "$cmd"
     else
-        ssh "${SSH_OPTS[@]}" "$TEE_USER@$TEE_HOST" "sudo -n bash -c $(printf '%q' "$cmd")"
+        retry_255 ssh "${SSH_OPTS[@]}" "$TEE_USER@$TEE_HOST" "sudo -n bash -c $(printf '%q' "$cmd")"
     fi
 }
 
@@ -89,15 +112,15 @@ mkdir -p "$OUT_DIR" "$BIN_DIR"
 sevctl_ssh() {
     local cmd="$1"
     if [ "$SEVCTL_USER" = "root" ]; then
-        ssh "${SSH_OPTS[@]}" "root@$SEVCTL_HOST" "$cmd"
+        retry_255 ssh "${SSH_OPTS[@]}" "root@$SEVCTL_HOST" "$cmd"
     else
-        ssh "${SSH_OPTS[@]}" "$SEVCTL_USER@$SEVCTL_HOST" "sudo -n bash -c $(printf '%q' "$cmd")"
+        retry_255 ssh "${SSH_OPTS[@]}" "$SEVCTL_USER@$SEVCTL_HOST" "sudo -n bash -c $(printf '%q' "$cmd")"
     fi
 }
 
 echo "==> Fetching sevctl from $SEVCTL_HOST..."
 sevctl_ssh "cp /opt/sevctl /tmp/sevctl && chmod 644 /tmp/sevctl"
-scp "${SSH_OPTS[@]}" "$SEVCTL_USER@$SEVCTL_HOST:/tmp/sevctl" "$BIN_DIR/sevctl"
+retry_255 scp "${SSH_OPTS[@]}" "$SEVCTL_USER@$SEVCTL_HOST:/tmp/sevctl" "$BIN_DIR/sevctl"
 sevctl_ssh "rm -f /tmp/sevctl"
 chmod +x "$BIN_DIR/sevctl"
 # Fail here, not at init-session time, if the binary doesn't run on this host
@@ -133,7 +156,7 @@ if ! tee_ssh "test -f '$cached_img'"; then
     workdir=$(tee_ssh "mkdir -p '$CACHE_DIR' && mktemp -d '$CACHE_DIR/build-XXXXXX'")
 
     echo "    Uploading build scripts..."
-    scp "${SSH_OPTS[@]}" "$IMAGE_DIR/build_debian_image.sh" "$IMAGE_DIR/setup_debian_rootfs.sh" \
+    retry_255 scp "${SSH_OPTS[@]}" "$IMAGE_DIR/build_debian_image.sh" "$IMAGE_DIR/setup_debian_rootfs.sh" \
         "$TEE_USER@$TEE_HOST:/tmp/"
     tee_ssh "mv /tmp/build_debian_image.sh /tmp/setup_debian_rootfs.sh '$workdir/'"
 
@@ -160,7 +183,7 @@ else
 fi
 
 echo "==> Copying encrypted rootfs locally..."
-scp "${SSH_OPTS[@]}" "$TEE_USER@$TEE_HOST:$cached_img" "$OUT_DIR/rootfs.img"
+retry_255 scp "${SSH_OPTS[@]}" "$TEE_USER@$TEE_HOST:$cached_img" "$OUT_DIR/rootfs.img"
 
 echo "==> Confidential artifacts ready:"
 echo "    $BIN_DIR/sevctl"

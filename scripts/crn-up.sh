@@ -405,11 +405,20 @@ EOF
 
         # Confidential computing (AMD SEV) support
         if crn_is_confidential "$idx"; then
+            # ALEPH_VM_SUPERVISOR_IMPL=rust: the V-PROGRAM SNP auto-launch
+            # only exists in the Rust supervisor daemon (lifecycle.rs derives
+            # the session dir, force-inserts the verity sidecar and builds the
+            # measured cmdline). The default python daemon parks the CVM
+            # execution waiting for an operator session dance that a
+            # V-PROGRAM never performs, so the VM never reaches RUNNING
+            # (observed on aleph-testnets#35 run 31378982391). Rust-only on
+            # this CRN; the DO CRNs stay on the default python daemon.
             cat >> "$env_file" <<EOF
 ALEPH_VM_ENABLE_CONFIDENTIAL_COMPUTING=true
 ALEPH_VM_SEV_CTL_PATH=/opt/sevctl
+ALEPH_VM_SUPERVISOR_IMPL=rust
 EOF
-            echo "    Confidential computing: enabled"
+            echo "    Confidential computing: enabled (rust supervisor impl)"
         fi
 
         # Copy config (via /tmp: the SSH user may not be root)

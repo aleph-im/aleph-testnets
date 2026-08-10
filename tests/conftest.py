@@ -472,3 +472,40 @@ def crn_nodes(aleph_cli):
     if len(nodes) < 2:
         pytest.skip(f"Need at least 2 CRNs for migration tests, found {len(nodes)}")
     return nodes
+
+
+# -- V-PROGRAM fixtures -------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def vprogram_dir() -> str:
+    """Directory holding the prebuilt V-PROGRAM fixtures (runtime bundle,
+    manifest template, fib-service workload), prepared by
+    scripts/vprogram-artifacts.sh. tests/test_vprograms.py skips without it."""
+    path = os.environ.get("ALEPH_TESTNET_VPROGRAM_DIR", "")
+    if not path or not os.path.isdir(path):
+        pytest.skip("No V-PROGRAM fixtures — requires ALEPH_TESTNET_VPROGRAM_DIR")
+    return path
+
+
+@pytest.fixture(scope="session")
+def vprogram_runtime_hash(aleph_cli, vprogram_dir, tmp_path_factory) -> str:
+    """Upload the runtime bundle + manifest; return the manifest's STORE item
+    hash (what `vprogram create --runtime` pins).
+
+    The manifest template ships with bundle.ref zeroed because the bundle's
+    STORE hash only exists after this run's upload. The CRN downloads the
+    bundle by its sha256 (the native-storage path), which the template already
+    pins, but ref is patched to the real message hash anyway to keep the
+    published manifest honest."""
+    bundle_hash = _upload_with_balance_retry(
+        aleph_cli,
+        os.path.join(vprogram_dir, "snp-image.tar.gz"),
+        "V-PROGRAM runtime bundle",
+        timeout=300,
+    )
+    with open(os.path.join(vprogram_dir, "manifest-template.json")) as f:
+        manifest = json.load(f)
+    manifest["bundle"]["ref"] = bundle_hash
+    out = tmp_path_factory.mktemp("vprogram") / "manifest.json"
+    out.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
+    return _upload_with_balance_retry(aleph_cli, str(out), "V-PROGRAM runtime manifest")

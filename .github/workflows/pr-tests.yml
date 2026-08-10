@@ -160,7 +160,7 @@ jobs:
               chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
               echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' > /etc/apt/sources.list.d/github-cli.list"
             ssh root@${DROPLET_IPV4} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
-            ssh root@${DROPLET_IPV4} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io docker-compose-v2 python3-pip jq curl gh"
+            ssh root@${DROPLET_IPV4} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io docker-compose-v2 python3-pip jq curl gh cryptsetup-bin"
             # Let sshd settle in case apt restarted it anyway.
             for i in $(seq 1 20); do ssh root@${DROPLET_IPV4} true 2>/dev/null && break; sleep 3; done
           ) &
@@ -289,6 +289,13 @@ jobs:
             SEVCTL_HOST='${CRN_0_IPV4}' \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             bash scripts/confidential-artifacts.sh"
+
+      - name: Prepare V-PROGRAM artifacts
+        run: |
+          # Prebuilt runtime bundle + fib-service workload from the
+          # vprogram-fixtures release; tests/test_vprograms.py skips when
+          # .local/vprogram is absent (local-up.sh exports its path).
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/vprogram-artifacts.sh"
 
       - name: Run tests
         run: |

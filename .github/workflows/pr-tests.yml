@@ -340,6 +340,42 @@ jobs:
           $SSH "${SUDO}journalctl -u aleph-vm-agent.service --no-pager --since '$since'" > tee-agent.txt 2>&1 || true
           $SSH "${SUDO}journalctl -u 'aleph-vm-controller@*' --no-pager --since '$since'" > tee-controllers.txt 2>&1 || true
 
+      - name: Collect TEE network diagnostics
+        if: always()
+        run: |
+          # Host-level view of the V-PROGRAM attestation-port DNAT: rule set,
+          # interfaces, listeners, then live probes (host -> guest :8443
+          # directly, and this runner -> public endpoint through the DNAT).
+          # Diagnoses reachability failures the test can only see as
+          # 'error sending request'.
+          TEE_HOST="${{ secrets.AMD_SEV_SNP_HOST }}"
+          TEE_USER="${{ secrets.AMD_SEV_SNP_USER }}"
+          if [ "$TEE_USER" = "root" ]; then SSH="ssh root@$TEE_HOST"; SUDO=""; else SSH="ssh $TEE_USER@$TEE_HOST"; SUDO="sudo -n "; fi
+          {
+            echo "=== nft ruleset ==="
+            $SSH "${SUDO}nft list ruleset" || true
+            echo "=== ip addr ==="
+            $SSH "ip addr" || true
+            echo "=== ip route ==="
+            $SSH "ip route" || true
+            echo "=== ss -tlnp ==="
+            $SSH "${SUDO}ss -tlnp" || true
+          } > tee-network.txt 2>&1
+          rule=$(grep -m1 -E "dnat.*:8443" tee-network.txt || true)
+          echo "attestation DNAT rule: ${rule:-<none>}" >> tee-network.txt
+          guest_ip=$(echo "$rule" | grep -oE '172\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          host_port=$(echo "$rule" | grep -oE 'dport [0-9]+' | head -1 | awk '{print $2}')
+          {
+            if [ -n "$guest_ip" ]; then
+              echo "=== probe: TEE host -> guest $guest_ip:8443 ==="
+              $SSH "curl -ksv --max-time 5 https://$guest_ip:8443/health" || true
+            fi
+            if [ -n "$host_port" ]; then
+              echo "=== probe: runner -> TEE:$host_port (through DNAT) ==="
+              curl -ksv --max-time 5 "https://$TEE_HOST:$host_port/health" || true
+            fi
+          } >> tee-network.txt 2>&1
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -353,6 +389,7 @@ jobs:
             tee-supervisor.txt
             tee-agent.txt
             tee-controllers.txt
+            tee-network.txt
 
       - name: Reset TEE server
         if: always()

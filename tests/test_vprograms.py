@@ -14,6 +14,7 @@ of aleph-vm od/vprogram-integration).
 """
 import json
 import os
+import subprocess
 import time
 
 from tests.test_programs import _parse_json_stream
@@ -98,16 +99,31 @@ def test_vprogram_deploy_and_attested_call(
     # call at 11:46:49, guest bind at 11:46:52), so retry transport-level
     # failures briefly. Verification failures still fail fast.
     deadline = time.time() + 120
+    curl_probe = None
     while True:
         health = aleph_cli(
             "vprogram", "call", item_hash, "/health", check=False, timeout=120
         )
         if health.returncode == 0:
             break
+        if curl_probe is None:
+            # Transport ground truth, captured in the same seconds the CLI
+            # fails: a raw TLS request with NO attestation verification.
+            # 200 here + a CLI failure means the RA-TLS verifier rejected
+            # the handshake (the CLI's 'error sending request' hides that
+            # verdict until aleph-rs#319 ships); a curl failure means the
+            # endpoint genuinely is not reachable.
+            probe_url = endpoint.rstrip("/") + "/health"
+            p = subprocess.run(
+                ["curl", "-ks", "-o", "/dev/null", "-w", "%{http_code}", probe_url],
+                capture_output=True, text=True, timeout=15,
+            )
+            curl_probe = p.stdout.strip() or "no-response"
         transient = "error sending request" in (health.stderr or "")
         if not transient or time.time() >= deadline:
             raise AssertionError(
-                f"attested /health call failed: {(health.stderr or '')[-1000:]}"
+                f"attested /health call failed (unverified curl probe of the same "
+                f"endpoint: HTTP {curl_probe}): {(health.stderr or '')[-1000:]}"
             )
         time.sleep(5)
     assert json.loads(health.stdout)["status"] == "ok"

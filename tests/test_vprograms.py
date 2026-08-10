@@ -14,6 +14,7 @@ of aleph-vm od/vprogram-integration).
 """
 import json
 import os
+import time
 
 from tests.test_programs import _parse_json_stream
 
@@ -23,13 +24,30 @@ CREATE_WAIT_SECS = 900
 
 
 def _vprogram_message(objs: list[dict]) -> dict:
-    """The V-PROGRAM message from a `vprogram create --json` output stream
-    (STORE messages for the workload + hash tree come first, the --wait
-    payload last)."""
+    """The V-PROGRAM submission receipt from a `vprogram create --json`
+    output stream (the --wait payload comes last)."""
     for obj in objs:
-        if "verification" in (obj.get("content") or {}):
+        if obj.get("type") == "V-PROGRAM":
             return obj
     raise AssertionError(f"no V-PROGRAM message in CLI output: {objs}")
+
+
+def _endpoint_via_show(aleph_cli, item_hash: str, timeout: float) -> str | None:
+    """Poll `vprogram show` until the attested endpoint resolves.
+
+    TODO(aleph-rs#318): remove once the pinned CLI carries the --wait fix.
+    The rc1 CLI samples the endpoint exactly once at readiness, before the
+    CRN maps the attestation port (which happens only after the SNP guest
+    finishes its measured boot), so create's payload reports null even
+    though the endpoint comes up shortly after."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        shown = aleph_cli("vprogram", "show", item_hash, parse_json=True)
+        endpoint = shown.get("attested_endpoint")
+        if endpoint:
+            return endpoint
+        time.sleep(10)
+    return None
 
 
 def test_vprogram_deploy_and_attested_call(
@@ -56,6 +74,8 @@ def test_vprogram_deploy_and_attested_call(
         f"V-PROGRAM {item_hash} not reachable within {CREATE_WAIT_SECS}s: {ready}"
     )
     endpoint = ready.get("attested_endpoint")
+    if not endpoint:
+        endpoint = _endpoint_via_show(aleph_cli, item_hash, timeout=600)
     assert endpoint, (
         "V-PROGRAM is running but no attested endpoint was resolved — "
         "is the CRN mapping the :8443 attestation port (aleph-vm#1079)?"

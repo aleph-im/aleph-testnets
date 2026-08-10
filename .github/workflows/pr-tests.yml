@@ -361,20 +361,24 @@ jobs:
             echo "=== ss -tlnp ==="
             $SSH "${SUDO}ss -tlnp" || true
           } > tee-network.txt 2>&1
-          rule=$(grep -m1 -E "dnat.*:8443" tee-network.txt || true)
-          echo "attestation DNAT rule: ${rule:-<none>}" >> tee-network.txt
-          guest_ip=$(echo "$rule" | grep -oE '172\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-          host_port=$(echo "$rule" | grep -oE 'dport [0-9]+' | head -1 | awk '{print $2}')
-          {
-            if [ -n "$guest_ip" ]; then
-              echo "=== probe: TEE host -> guest $guest_ip:8443 ==="
-              $SSH "curl -ksv --max-time 5 https://$guest_ip:8443/health" || true
-            fi
-            if [ -n "$host_port" ]; then
-              echo "=== probe: runner -> TEE:$host_port (through DNAT) ==="
-              curl -ksv --max-time 5 "https://$TEE_HOST:$host_port/health" || true
-            fi
-          } >> tee-network.txt 2>&1
+          # Probe EVERY attestation DNAT rule: stale rules from earlier runs
+          # survive on the static server, so only probing one can test a
+          # leftover mapping instead of this run's.
+          grep -E "dnat.*:8443" tee-network.txt | while read -r rule; do
+            echo "attestation DNAT rule: $rule" >> tee-network.txt
+            guest_ip=$(echo "$rule" | grep -oE '172\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            host_port=$(echo "$rule" | grep -oE 'dport [0-9]+' | head -1 | awk '{print $2}')
+            {
+              if [ -n "$guest_ip" ]; then
+                echo "=== probe: TEE host -> guest $guest_ip:8443 ==="
+                $SSH "curl -ks --max-time 5 -o /dev/null -w '%{http_code}\n' https://$guest_ip:8443/health" || true
+              fi
+              if [ -n "$host_port" ]; then
+                echo "=== probe: runner -> TEE:$host_port (through DNAT) ==="
+                curl -ks --max-time 5 -o /dev/null -w '%{http_code}\n' "https://$TEE_HOST:$host_port/health" || true
+              fi
+            } >> tee-network.txt 2>&1
+          done
 
       - name: Upload artifacts
         if: always()

@@ -6,15 +6,20 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    tag: "0.10.2-rc5"
+    # 0.10.3-rc7 is the first pinned release with V-PROGRAM support: message
+    # handler (handlers/content/vprogram.py), vms DB migration 0064 and the
+    # V-PROGRAM cost model.
+    tag: "0.10.3-rc7"
 
   p2p-service:
     image: alephim/p2p-service
     tag: "0.1.5"
 
   aleph-cli:
-    version: "0.11.1"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.11.1/aleph-cli-linux-x86_64"
+    # 0.17.0-rc1 carries the vprogram command set (create/show/call with
+    # RA-TLS attestation verification).
+    version: "0.17.0-rc1"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc1/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer
@@ -26,22 +31,26 @@ components:
 
   scheduler-rs:
     image: alephim/scheduler-rs
-    # 0.1.2 makes node_watcher poll the v2 executions endpoint (scheduler#188),
-    # so a gracefully-stopping VM stays observed (present as STOPPED) instead of
-    # vanishing from the v1 running-only list and being reported `missing`. Pairs
-    # with aleph-vm's stop=stop_vm fix, which keeps the stopped VM in the pool.
-    tag: "0.1.2"
+    # vprogram-rc1 = 0.1.2 (v2 executions polling, scheduler#188) plus
+    # V-PROGRAM scheduling (scheduler#193): ingestion, VmType::VProgram,
+    # SEV-SNP capability matching and the v_programs allocation bucket
+    # (matches aleph-vm#1052's /control/allocations wire model). One-off
+    # image published from the od/vprogram-scheduling branch.
+    tag: "vprogram-rc1"
 
   scheduler-api:
     image: alephim/scheduler-api
-    tag: "0.1.2"
+    # Same od/vprogram-scheduling build as scheduler-rs above
+    # (vm_type=v_program filter on /api/v1/vms).
+    tag: "vprogram-rc1"
 
   aleph-vm:
-    # aleph-vm dev, now including #1012 (gRPC-only agent, total agent /
-    # supervisor import separation). The split-endgame branch passed the
-    # full 25-test suite (instances + migration + PROGRAM/microVM flow) on
-    # run 28658683992 before merging; its tree is identical to this dev.
-    branch: "dev"
+    # od/vprogram-integration = dev (gRPC split, #1012) plus the full
+    # V-PROGRAM stack (#1050..#1079): scheduler support + SNP vCPU
+    # advertising, SEV-SNP launch path, measured workload volumes with
+    # dm-verity roothash in the measured cmdline, fib-service demo workload,
+    # and the attestation port mapped to a host IPv4 port (#1079).
+    branch: "od/vprogram-integration"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

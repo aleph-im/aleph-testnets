@@ -20,10 +20,10 @@
 #   TEE_USER       SSH user on the TEE server (default: root; non-root needs
 #                  passwordless sudo)
 #   SEVCTL_HOST    Host to copy /opt/sevctl from (default: TEE_HOST). Prefer a
-#                  debian-12 CRN: its sevctl is built against the oldest glibc
-#                  and therefore runs on this (newer) machine, whereas the TEE
-#                  server's distro — and its .deb's glibc baseline — may be
-#                  newer than ours.
+#                  CRN running the same distro as this machine (ubuntu-24.04
+#                  in CI): its sevctl is built against the same glibc and
+#                  therefore runs here, whereas the TEE server's distro (and
+#                  its .deb's glibc baseline) may be newer than ours.
 #   SEVCTL_USER    SSH user on SEVCTL_HOST (default: TEE_USER if SEVCTL_HOST
 #                  is the TEE server, else root)
 #   SSH_KEY_FILE   SSH private key (default: ~/.ssh/id_ed25519)

@@ -16,16 +16,17 @@ components:
     tag: "0.1.5"
 
   aleph-cli:
-    # 0.17.0-rc4: vprogram command set (create/show/call with RA-TLS
+    # 0.17.0-rc5: vprogram command set (create/show/call with RA-TLS
     # attestation verification), create --wait polling for the attested
     # endpoint (aleph-rs#318), named attestation-rejection errors
     # (aleph-rs#319), the attestation DTO aligned with the guest agent's
-    # {tee_type, data} schema (aleph-rs#321), and the key-binding hash
+    # {tee_type, data} schema (aleph-rs#321), the key-binding hash
     # domain-separated to match the agent's
     # SHA-384("aleph-attest-tls-key-v1\0" || pubkey) report_data
-    # (aleph-rs#323).
-    version: "0.17.0-rc4"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc4/aleph-cli-linux-x86_64"
+    # (aleph-rs#323), and `call` writing the response body verbatim to
+    # stdout with the HTTP status on stderr (aleph-rs#325).
+    version: "0.17.0-rc5"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc5/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer

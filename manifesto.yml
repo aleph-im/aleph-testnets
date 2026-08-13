@@ -16,16 +16,17 @@ components:
     tag: "0.1.5"
 
   aleph-cli:
-    # 0.17.0-rc6: successor to rc5 (first fully green pin, run
-    # 31480431267). rc5 carried the vprogram command set with full RA-TLS
-    # attestation verification: create --wait polling (aleph-rs#318), named
-    # attestation-rejection errors (aleph-rs#319), the {tee_type, data}
-    # attestation DTO (aleph-rs#321), the domain-separated
-    # SHA-384("aleph-attest-tls-key-v1\0" || pubkey) key binding
-    # (aleph-rs#323), and `call` writing the body verbatim to stdout
-    # (aleph-rs#325). Roll back to rc5 if rc6 regresses.
-    version: "0.17.0-rc6"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc6/aleph-cli-linux-x86_64"
+    # 0.17.0-rc7: attestation hardening on top of rc6 (green in run
+    # 31543358162): SEV-SNP TCB floor in the RA-TLS client (aleph-rs#331),
+    # ARK SubjectPublicKeyInfo pinned against hardcoded hashes
+    # (aleph-rs#332), constant-time measurement/report_data comparison
+    # (aleph-rs#333), DEBUG policy rejected at vprogram create without
+    # --allow-debug (aleph-rs#334; the default 0x30000 policy is
+    # unaffected), and a warning on non-HTTPS CRN discovery addresses
+    # (aleph-rs#336). Roll back to rc6 if rc7 regresses (watch the TCB
+    # floor on the TEE server's firmware).
+    version: "0.17.0-rc7"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc7/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer

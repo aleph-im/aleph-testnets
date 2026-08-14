@@ -16,17 +16,14 @@ components:
     tag: "0.1.5"
 
   aleph-cli:
-    # 0.17.0-rc7: attestation hardening on top of rc6 (green in run
-    # 31543358162): SEV-SNP TCB floor in the RA-TLS client (aleph-rs#331),
-    # ARK SubjectPublicKeyInfo pinned against hardcoded hashes
-    # (aleph-rs#332), constant-time measurement/report_data comparison
-    # (aleph-rs#333), DEBUG policy rejected at vprogram create without
-    # --allow-debug (aleph-rs#334; the default 0x30000 policy is
-    # unaffected), and a warning on non-HTTPS CRN discovery addresses
-    # (aleph-rs#336). Roll back to rc6 if rc7 regresses (watch the TCB
-    # floor on the TEE server's firmware).
-    version: "0.17.0-rc7"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc7/aleph-cli-linux-x86_64"
+    # 0.17.0-rc8: fixes rc7's un-scoped SNP TCB floor, which failed
+    # attestation on the testnet TEE host ("Microcode 21<84" in run
+    # 31724124048: rc7 compared the Milan-family baseline against every
+    # silicon family). rc8 scopes the TCB baseline by silicon family
+    # (aleph-rs#339). Everything else is rc7's hardening set (aleph-rs#331,
+    # #332, #333, #334, #336).
+    version: "0.17.0-rc8"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc8/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer
@@ -52,12 +49,14 @@ components:
     tag: "vprogram-rc1"
 
   aleph-vm:
-    # od/vprogram-integration = dev (gRPC split, #1012) plus the full
-    # V-PROGRAM stack (#1050..#1079): scheduler support + SNP vCPU
-    # advertising, SEV-SNP launch path, measured workload volumes with
-    # dm-verity roothash in the measured cmdline, fib-service demo workload,
-    # and the attestation port mapped to a host IPv4 port (#1079).
-    branch: "od/vprogram-integration"
+    # od/vprogram-integration-rc8 (aleph-vm#1114, supersedes #1070's
+    # od/vprogram-integration): current dev, which now includes the whole
+    # V-PROGRAM stack (#1050, #1052, #1071, #1077, #1082, #1083) plus the
+    # static-IPv6 DHCPv6 guest path (#1087), with the still-pending pieces
+    # merged on top: attestation port map (#1079), port-forward healing on
+    # re-adoption (#1085), measured workload-volume guest init, and the
+    # update_refs V-PROGRAM fix.
+    branch: "od/vprogram-integration-rc8"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

@@ -16,14 +16,15 @@ components:
     tag: "0.1.5"
 
   aleph-cli:
-    # 0.17.0-rc8: fixes rc7's un-scoped SNP TCB floor, which failed
-    # attestation on the testnet TEE host ("Microcode 21<84" in run
-    # 31724124048: rc7 compared the Milan-family baseline against every
-    # silicon family). rc8 scopes the TCB baseline by silicon family
-    # (aleph-rs#339). Everything else is rc7's hardening set (aleph-rs#331,
-    # #332, #333, #334, #336).
-    version: "0.17.0-rc8"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc8/aleph-cli-linux-x86_64"
+    # 0.17.0-rc9: TCB floors recalibrated to AMD's published EntrySign
+    # (SB-3019) mitigation minimums (aleph-rs#340): Zen4c 28 -> 25,
+    # Milan 213 -> 219 (the old value accepted EntrySign-vulnerable Milan
+    # hosts), plus stepping-aware floors for Milan-X/Genoa-X. The testnet
+    # TEE host still sits at SPL 21 (< 25) pending its Scaleway BIOS
+    # update, so the test passes --min-tcb/--accept-outdated-tcb for now
+    # (see tests/test_vprograms.py TCB_FLOOR_ARGS).
+    version: "0.17.0-rc9"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc9/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Fetch the prebuilt V-PROGRAM test fixtures for tests/test_vprograms.py.
 #
-# The runtime (bundle + manifest) is the 2026.08.18.1 build (Linux 6.18,
-# aleph-vm rev d9e0c5c6: adds the link-local DAD wait before the guest's
-# DHCPv6 solicit, aleph-vm#1125; measurement c632109e..., platform
-# roothash unchanged), published on Aleph mainnet native storage; native
+# The runtime (bundle + manifest) is the 2026.08.18.2 build (Linux 6.18,
+# aleph-vm rev 39ec840a: v4-scoped udhcpc deconfig flush so the guest's
+# IPv6 link-local survives, aleph-vm#1126, on top of #1125's DAD wait;
+# measurement 952167b9..., platform roothash unchanged), published on Aleph mainnet native storage; native
 # storage is content-addressed by sha256, so the fetch URL doubles as the
 # pin. The fib workload still comes from the vprogram-fixtures-1 GitHub
 # prerelease (unchanged).
@@ -31,13 +31,13 @@ ALEPH_STORAGE_URL="https://official.aleph.cloud/api/v0/storage/raw"
 # sha256 of every fixture. Aleph-storage assets are fetched by this hash;
 # release assets by name.
 declare -A CHECKSUMS=(
-    [snp-image.tar.gz]="a07b48bde01f39506ec10e0176aa366eac202ff1d153b3b190b0ecf3ee119e46"
-    [manifest-template.json]="9c585dc0b9d37415bbc736242a39cfa38bacdda6abbfe84cebc28373c054b454"
+    [snp-image.tar.gz]="b2795ab58f23bf25674de56c6b821f0b78e0432ef716b3802830a43965d11bbe"
+    [manifest-template.json]="eb0dd8e9b118a36cd6f80d8c9903ae66fb02142c6b140987508aae5cc39e8a50"
     [fib-workload.ext4]="5a04d7949c488acbd909d2a63190fc9810d0d61263274c294b714625f8193db0"
 )
 declare -A SOURCES=(
-    [snp-image.tar.gz]="$ALEPH_STORAGE_URL/a07b48bde01f39506ec10e0176aa366eac202ff1d153b3b190b0ecf3ee119e46"
-    [manifest-template.json]="$ALEPH_STORAGE_URL/9c585dc0b9d37415bbc736242a39cfa38bacdda6abbfe84cebc28373c054b454"
+    [snp-image.tar.gz]="$ALEPH_STORAGE_URL/b2795ab58f23bf25674de56c6b821f0b78e0432ef716b3802830a43965d11bbe"
+    [manifest-template.json]="$ALEPH_STORAGE_URL/eb0dd8e9b118a36cd6f80d8c9903ae66fb02142c6b140987508aae5cc39e8a50"
     [fib-workload.ext4]="$RELEASE_URL/fib-workload.ext4"
 )
 

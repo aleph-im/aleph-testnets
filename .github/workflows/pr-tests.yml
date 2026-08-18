@@ -265,10 +265,14 @@ jobs:
           # this handles vm-connector, .deb download, supervisor config).
           # GH_TOKEN lets crn-up.sh fetch the aleph-vm .deb from CI artifacts
           # when manifesto.yml pins a branch instead of a release.
+          # STATIC_CRN_IPV6_POOL: the TEE server's attached flexible-IP /64.
+          # The native /64 is egress-filtered per address on Elastic Metal
+          # (VM replies never leave the fabric); see crn-up.sh.
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
             CCN_URL=http://${DROPLET_IPV4}:4024 \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             CRN_COUNT=${CRN_COUNT} \
+            STATIC_CRN_IPV6_POOL=2001:bc8:702:32d::/64 \
             GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             bash scripts/crn-up.sh --install"
 

@@ -382,8 +382,23 @@ EOF
             fi
         fi
 
-        # Configure IPv6 if the CRN has a public IPv6 address
-        if [ -f "$ipv6_file" ]; then
+        # Configure IPv6 if the CRN has a public IPv6 address.
+        #
+        # STATIC_CRN_IPV6_POOL overrides the derived pool for static CRNs.
+        # Needed on Scaleway Elastic Metal: the NATIVE /64 (what detection
+        # finds on the uplink) is inbound-routed but egress-filtered to the
+        # registered primary address, so VM-sourced replies silently never
+        # leave the fabric; an attached flexible-IP /64 uses the on-link
+        # NDP model the daemon's ndppd serves, and its egress is open (see
+        # aleph-vm docs/plans/2026-07-03-scaleway-ipv6-experiments.md,
+        # 2026-08-18 addendum).
+        if crn_is_static "$idx" && [ -n "${STATIC_CRN_IPV6_POOL:-}" ]; then
+            cat >> "$env_file" <<EOF
+ALEPH_VM_IPV6_ADDRESS_POOL=$STATIC_CRN_IPV6_POOL
+ALEPH_VM_IPV6_ALLOCATION_POLICY=dynamic
+EOF
+            echo "    IPv6 pool (override): $STATIC_CRN_IPV6_POOL"
+        elif [ -f "$ipv6_file" ]; then
             local ipv6_addr
             ipv6_addr=$(cat "$ipv6_file")
             # Derive the /64 prefix from the assigned address

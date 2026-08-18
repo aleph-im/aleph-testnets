@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Fetch the prebuilt V-PROGRAM test fixtures for tests/test_vprograms.py.
 #
-# The runtime (bundle + manifest) is the 2026.08.18 build (Linux 6.18,
-# aleph-vm rev 5e71d9ad, nix#image), published on Aleph mainnet native
-# storage (manifest STORE c4e882eb21bd82393e831dd1c828efd2676741c5de2ac1f
-# b0d966917e104bf0b); native storage is content-addressed by sha256, so the
-# fetch URL doubles as the pin. The fib workload still comes from the
-# vprogram-fixtures-1 GitHub prerelease (unchanged).
+# The runtime (bundle + manifest) is the 2026.08.18.1 build (Linux 6.18,
+# aleph-vm rev d9e0c5c6: adds the link-local DAD wait before the guest's
+# DHCPv6 solicit, aleph-vm#1125; measurement c632109e..., platform
+# roothash unchanged), published on Aleph mainnet native storage; native
+# storage is content-addressed by sha256, so the fetch URL doubles as the
+# pin. The fib workload still comes from the vprogram-fixtures-1 GitHub
+# prerelease (unchanged).
 #
 #   1. snp-image.tar.gz       — runtime bundle (OVMF, kernel, initrd,
 #                               dm-verity platform rootfs + hash tree)
@@ -30,13 +31,13 @@ ALEPH_STORAGE_URL="https://official.aleph.cloud/api/v0/storage/raw"
 # sha256 of every fixture. Aleph-storage assets are fetched by this hash;
 # release assets by name.
 declare -A CHECKSUMS=(
-    [snp-image.tar.gz]="1818c1012ce98c956fb3de6fb96a90eb36847c1e60d585a1842a477a6d93c78c"
-    [manifest-template.json]="049e0267d44cf2d04063f916935c773ffde6db11ad959ae9ed782161b1815280"
+    [snp-image.tar.gz]="a07b48bde01f39506ec10e0176aa366eac202ff1d153b3b190b0ecf3ee119e46"
+    [manifest-template.json]="9c585dc0b9d37415bbc736242a39cfa38bacdda6abbfe84cebc28373c054b454"
     [fib-workload.ext4]="5a04d7949c488acbd909d2a63190fc9810d0d61263274c294b714625f8193db0"
 )
 declare -A SOURCES=(
-    [snp-image.tar.gz]="$ALEPH_STORAGE_URL/1818c1012ce98c956fb3de6fb96a90eb36847c1e60d585a1842a477a6d93c78c"
-    [manifest-template.json]="$ALEPH_STORAGE_URL/049e0267d44cf2d04063f916935c773ffde6db11ad959ae9ed782161b1815280"
+    [snp-image.tar.gz]="$ALEPH_STORAGE_URL/a07b48bde01f39506ec10e0176aa366eac202ff1d153b3b190b0ecf3ee119e46"
+    [manifest-template.json]="$ALEPH_STORAGE_URL/9c585dc0b9d37415bbc736242a39cfa38bacdda6abbfe84cebc28373c054b454"
     [fib-workload.ext4]="$RELEASE_URL/fib-workload.ext4"
 )
 

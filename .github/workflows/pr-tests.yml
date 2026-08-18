@@ -384,17 +384,31 @@ jobs:
               $SSH "curl -6ks --max-time 5 -o /dev/null -w '%{http_code}\n' https://[$guest6]:8443/health" || true
               echo "=== probe: CCN droplet -> guest [$guest6]:8443 (v6, full path incl. ndppd) ==="
               ssh "root@${DROPLET_IPV4}" "curl -6ks --max-time 5 -o /dev/null -w '%{http_code}\n' https://[$guest6]:8443/health; ip -6 route show default | head -1" || true
-              # A/B: the Scaleway experiments validated kernel proxy-NDP end
-              # to end on this host; the daemon uses ndppd (iface mode)
-              # instead. If the external probe only succeeds with a kernel
-              # proxy entry in place, ndppd is conclusively the broken link.
+              # Ground truth for the external path. Established so far:
+              # Scaleway ROUTES the whole /64 to the host (external SYNs for
+              # the guest arrive with no NDP involved), the ip6 forward path
+              # is open (policy accept), and dnsmasq's RA carries a real
+              # router lifetime (netns-verified on this host). Capture
+              # TCP:8443 on BOTH the uplink and the tap during a droplet
+              # probe to localize the drop: SYN on uplink only = host does
+              # not forward; SYN on tap without SYN-ACK = guest does not
+              # reply (route/firewall); SYN-ACK on tap and uplink with the
+              # probe still failing = the fabric drops guest-sourced egress.
               uplink=$(grep -oE '^proxy [a-z0-9]+' tee-network.txt | head -1 | awk '{print $2}')
-              if [ -n "$uplink" ]; then
-                echo "=== A/B: kernel proxy-NDP entry for $guest6 on $uplink, then droplet probe again ==="
-                $SSH "${SUDO}sysctl -w net.ipv6.conf.$uplink.proxy_ndp=1; ${SUDO}ip -6 neigh add proxy $guest6 dev $uplink" || true
-                sleep 3
-                ssh "root@${DROPLET_IPV4}" "curl -6ks --max-time 8 -o /dev/null -w 'with-kernel-proxy: %{http_code}\n' https://[$guest6]:8443/health" || true
-                $SSH "${SUDO}ip -6 neigh del proxy $guest6 dev $uplink" || true
+              tap=$(grep -oE 'iface vmtap[0-9]+' tee-network.txt | head -1 | awk '{print $2}')
+              if [ -n "$uplink" ] && [ -n "$tap" ]; then
+                echo "=== dual capture ($uplink + $tap) during droplet probe of [$guest6]:8443 ==="
+                $SSH "command -v tcpdump >/dev/null || ${SUDO}apt-get install -y -q tcpdump >/dev/null 2>&1" || true
+                $SSH "${SUDO}sh -c 'nohup timeout 60 tcpdump -lni $uplink \"ip6 and tcp port 8443\" > /tmp/v6-uplink.txt 2>&1 &'" || true
+                $SSH "${SUDO}sh -c 'nohup timeout 60 tcpdump -lni $tap \"ip6 and tcp port 8443\" > /tmp/v6-tap.txt 2>&1 &'" || true
+                sleep 4
+                ssh "root@${DROPLET_IPV4}" "curl -6ks --max-time 10 -o /dev/null -w 'droplet-probe: %{http_code}\n' https://[$guest6]:8443/health" || true
+                sleep 4
+                $SSH "${SUDO}pkill -f 'tcpdump -lni'" || true
+                echo "=== uplink capture ==="
+                $SSH "cat /tmp/v6-uplink.txt" || true
+                echo "=== tap capture ==="
+                $SSH "cat /tmp/v6-tap.txt" || true
               fi
             done
           } > tee-network.txt 2>&1

@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import time
+import warnings
 
 from tests.test_programs import _parse_json_stream
 
@@ -127,6 +128,38 @@ def test_vprogram_deploy_and_attested_call(
     )
     assert fib.returncode == 0, f"attested /fib/10 call failed: {(fib.stderr or '')[-1000:]}"
     assert json.loads(fib.stdout)["result"] == 55
+
+    # IPv6 reachability. The CRN derives and publishes the guest's static
+    # IPv6 up front; the guest leases exactly that address via per-tap
+    # DHCPv6 with its default route from the RA, ndppd proxies the /124,
+    # and the attest agent binds [::]:8443 dual-stack (aleph-vm#1087).
+    # Probe the published address directly from this host over raw TLS:
+    # reachability only, the attested path is already exercised via the
+    # mapped IPv4 port above. First E2E exercise of the v6 path, so warn
+    # instead of fail while it bakes (the same convention as
+    # test_programs' IPv6 egress probe); promote to an assertion once it
+    # has been green on a few runs.
+    guest_ipv6 = shown.get("ipv6_ip")
+    if not guest_ipv6:
+        warnings.warn("V-PROGRAM IPv6: CRN published no ipv6_ip; probe skipped")
+    else:
+        probe_url = f"https://[{guest_ipv6}]:8443/health"
+        deadline = time.time() + 60
+        code = "no-response"
+        while time.time() < deadline:
+            probe = subprocess.run(
+                ["curl", "-ks", "-6", "-o", "/dev/null", "-w", "%{http_code}",
+                 "--max-time", "10", probe_url],
+                capture_output=True, text=True, timeout=20,
+            )
+            code = probe.stdout.strip() or "no-response"
+            if code == "200":
+                break
+            time.sleep(5)
+        if code == "200":
+            print(f"V-PROGRAM IPv6 OK: {probe_url} -> 200")
+        else:
+            warnings.warn(f"V-PROGRAM IPv6 unreachable: {probe_url} -> HTTP {code}")
 
     # Fail-closed: a wrong expected measurement must abort the call without
     # ever printing a response body.

@@ -50,14 +50,14 @@ components:
     tag: "vprogram-rc1"
 
   aleph-vm:
-    # od/vprogram-integration-rc8 (aleph-vm#1114, supersedes #1070's
+    # od/vprogram-integration-2 (aleph-vm#1124, supersedes #1114's
     # od/vprogram-integration): current dev, which now includes the whole
     # V-PROGRAM stack (#1050, #1052, #1071, #1077, #1082, #1083) plus the
     # static-IPv6 DHCPv6 guest path (#1087), with the still-pending pieces
     # merged on top: attestation port map (#1079), port-forward healing on
     # re-adoption (#1085), measured workload-volume guest init, and the
     # update_refs V-PROGRAM fix.
-    branch: "od/vprogram-integration-rc8"
+    branch: "od/vprogram-integration-2"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

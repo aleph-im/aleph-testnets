@@ -360,6 +360,30 @@ jobs:
             $SSH "ip route" || true
             echo "=== ss -tlnp ==="
             $SSH "${SUDO}ss -tlnp" || true
+            # IPv6 path (aleph-vm#1087): the guest holds a /124 next to the
+            # host tap address; inbound needs ndppd to proxy-answer NDP for
+            # that range on the uplink. Capture every piece, then probe the
+            # guest's v6 from the host itself (bypasses ndppd/upstream: a
+            # host-side 200 with an external timeout means NDP proxying is
+            # the broken link; a host-side failure means the guest v6 stack
+            # is).
+            echo "=== ip -6 route ==="
+            $SSH "ip -6 route" || true
+            echo "=== ip -6 neigh show proxy ==="
+            $SSH "ip -6 neigh show proxy" || true
+            echo "=== ndppd status ==="
+            $SSH "systemctl status ndppd --no-pager -n 20" || true
+            echo "=== ndppd config ==="
+            $SSH "cat /etc/ndppd.conf" || true
+            echo "=== sysctl proxy_ndp/forwarding ==="
+            $SSH "sysctl net.ipv6.conf.all.proxy_ndp net.ipv6.conf.all.forwarding" || true
+            $SSH "ip addr" | grep -oE '2[0-9a-f:]+::[0-9a-f]+0/124' | while read -r cidr; do
+              guest6=$(python3 -c "import ipaddress,sys; n=ipaddress.ip_interface('$cidr'); print(n.ip + 1)")
+              echo "=== probe: TEE host -> guest [$guest6]:8443 (v6, no ndppd involved) ==="
+              $SSH "curl -6ks --max-time 5 -o /dev/null -w '%{http_code}\n' https://[$guest6]:8443/health" || true
+              echo "=== probe: CCN droplet -> guest [$guest6]:8443 (v6, full path incl. ndppd) ==="
+              ssh "root@${DROPLET_IPV4}" "curl -6ks --max-time 5 -o /dev/null -w '%{http_code}\n' https://[$guest6]:8443/health; ip -6 route show default | head -1" || true
+            done
           } > tee-network.txt 2>&1
           # Probe EVERY attestation DNAT rule: stale rules from earlier runs
           # survive on the static server, so only probing one can test a

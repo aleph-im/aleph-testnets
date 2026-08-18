@@ -384,6 +384,18 @@ jobs:
               $SSH "curl -6ks --max-time 5 -o /dev/null -w '%{http_code}\n' https://[$guest6]:8443/health" || true
               echo "=== probe: CCN droplet -> guest [$guest6]:8443 (v6, full path incl. ndppd) ==="
               ssh "root@${DROPLET_IPV4}" "curl -6ks --max-time 5 -o /dev/null -w '%{http_code}\n' https://[$guest6]:8443/health; ip -6 route show default | head -1" || true
+              # A/B: the Scaleway experiments validated kernel proxy-NDP end
+              # to end on this host; the daemon uses ndppd (iface mode)
+              # instead. If the external probe only succeeds with a kernel
+              # proxy entry in place, ndppd is conclusively the broken link.
+              uplink=$(grep -oE '^proxy [a-z0-9]+' tee-network.txt | head -1 | awk '{print $2}')
+              if [ -n "$uplink" ]; then
+                echo "=== A/B: kernel proxy-NDP entry for $guest6 on $uplink, then droplet probe again ==="
+                $SSH "${SUDO}sysctl -w net.ipv6.conf.$uplink.proxy_ndp=1; ${SUDO}ip -6 neigh add proxy $guest6 dev $uplink" || true
+                sleep 3
+                ssh "root@${DROPLET_IPV4}" "curl -6ks --max-time 8 -o /dev/null -w 'with-kernel-proxy: %{http_code}\n' https://[$guest6]:8443/health" || true
+                $SSH "${SUDO}ip -6 neigh del proxy $guest6 dev $uplink" || true
+              fi
             done
           } > tee-network.txt 2>&1
           # Probe EVERY attestation DNAT rule: stale rules from earlier runs

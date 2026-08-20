@@ -51,12 +51,15 @@ components:
     tag: "vprogram-rc1"
 
   aleph-vm:
-    # od/snp-inst-4-agent (aleph-vm#1131 tip, ba690c65): current dev (the
-    # whole V-PROGRAM stack, the agent-owned IPv6 path and the merged
-    # aleph.compose/1 runtime, #1132) plus the SNP-instances stack
-    # (#1129/#1130/#1131: owner auth, instance images, supervisor + agent
-    # launch paths for mode=sev_snp).
-    branch: "od/snp-inst-4-agent"
+    # od/vprogram-integration-3 (aleph-vm#1142, deb-builder aggregation):
+    # od/snp-inst-4-agent (#1131 tip: dev with the V-PROGRAM stack, the
+    # agent-owned IPv6 path, the merged aleph.compose/1 runtime and the
+    # SNP-instances stack) plus the four validation-only commits that are
+    # not on dev yet: the attestation port map (#1079), port-forward
+    # healing on re-adoption (#1085), the update_refs V-PROGRAM fix and
+    # the agent run.py port-forward reconcile. Run 32361553700 proved the
+    # bare #1131 branch loses the attested endpoint without them.
+    branch: "od/vprogram-integration-3"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

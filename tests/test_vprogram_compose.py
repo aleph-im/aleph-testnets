@@ -68,36 +68,43 @@ def test_vprogram_compose_deploy_and_attested_call(
     assert shown["measurements"], "no measurements pinned on the message"
     assert shown["running"] is True, f"CRN does not report the VM as active: {shown}"
 
-    # Attested call through the RA-TLS channel. The compose guest has more
-    # startup work than the exec runtime (podman load + compose up) after
-    # the attestation port maps, so retry transport-level failures within
-    # the same budget the exec test uses. Verification failures fail fast.
-    deadline = time.time() + 120
+    # Attested call through the RA-TLS channel. The compose guest has real
+    # startup work left after the attestation port maps: verity-mount the
+    # workload volume, podman-load the image archives, compose up. During
+    # that window the attest agent is already up and answers with an
+    # upstream-unreachable 502 body while the CLI exits 0 (attestation
+    # itself succeeded; run 32372006187), so BOTH transport failures
+    # (rc != 0) and 502 bodies are the not-ready-yet signal. Verification
+    # failures fail fast.
+    deadline = time.time() + 240
     curl_probe = None
     while True:
         root = aleph_cli(
             "vprogram", "call", item_hash, "/", *TCB_FLOOR_ARGS,
             check=False, timeout=120,
         )
-        if root.returncode == 0:
+        body = root.stdout or ""
+        if root.returncode == 0 and "Hostname:" in body:
             break
-        if curl_probe is None:
+        transient_transport = root.returncode != 0 and "error sending request" in (root.stderr or "")
+        stack_starting = root.returncode == 0 and "upstream unreachable" in body
+        if transient_transport and curl_probe is None:
+            # Transport ground truth with NO attestation verification, to
+            # isolate attestation failures from plain unreachability.
             probe_url = endpoint.rstrip("/") + "/"
             p = subprocess.run(
                 ["curl", "-ks", "-o", "/dev/null", "-w", "%{http_code}", probe_url],
                 capture_output=True, text=True, timeout=15,
             )
             curl_probe = p.stdout.strip() or "no-response"
-        transient = "error sending request" in (root.stderr or "")
-        if not transient or time.time() >= deadline:
+        if not (transient_transport or stack_starting) or time.time() >= deadline:
             raise AssertionError(
-                f"attested / call failed (unverified curl probe of the same "
-                f"endpoint: HTTP {curl_probe}): {(root.stderr or '')[-1000:]}"
+                f"attested / call did not return the whoami dump within the "
+                f"startup budget (unverified curl probe: HTTP {curl_probe}): "
+                f"stdout={body[:500]!r} stderr={(root.stderr or '')[-500:]!r}"
             )
         time.sleep(5)
 
     # whoami's / dumps request/host info; Hostname proves the container
     # itself answered through the attested proxy, not some error page.
-    assert "Hostname:" in root.stdout, (
-        f"unexpected response body from the compose stack: {root.stdout[:500]}"
-    )
+    assert "Hostname:" in root.stdout

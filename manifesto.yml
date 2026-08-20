@@ -6,15 +6,26 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    tag: "0.10.2-rc5"
+    # 0.10.3-rc8 (2026-08-14), latest prerelease; rc7 was the first with
+    # V-PROGRAM support (handlers/content/vprogram.py, vms DB migration 0064,
+    # V-PROGRAM cost model).
+    tag: "0.10.3-rc8"
 
   p2p-service:
     image: alephim/p2p-service
     tag: "0.1.5"
 
   aleph-cli:
-    version: "0.11.1"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.11.1/aleph-cli-linux-x86_64"
+    # 0.17.0-rc10: `vprogram create --compose` (aleph.compose/1 workload
+    # builder, aleph-rs#344), fresh-nonce liveness challenge in vprogram
+    # call (#342), AMD chain validity windows + KDS CRL revocation (#343),
+    # explicit measurement/policy pins (#345) and PLATFORM_INFO posture
+    # gating. Keeps rc9's recalibrated EntrySign TCB floors; the testnet
+    # TEE host still sits at SPL 21 (< 25) pending its Scaleway BIOS
+    # update, so the test passes --min-tcb/--accept-outdated-tcb for now
+    # (see tests/test_vprograms.py TCB_FLOOR_ARGS).
+    version: "0.17.0-rc10"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc10/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer
@@ -26,17 +37,29 @@ components:
 
   scheduler-rs:
     image: alephim/scheduler-rs
-    tag: "0.1.2"
+    # vprogram-rc1 = 0.1.2 (v2 executions polling, scheduler#188) plus
+    # V-PROGRAM scheduling (scheduler#193): ingestion, VmType::VProgram,
+    # SEV-SNP capability matching and the v_programs allocation bucket
+    # (matches aleph-vm#1052's /control/allocations wire model). One-off
+    # image published from the od/vprogram-scheduling branch.
+    tag: "vprogram-rc1"
 
   scheduler-api:
     image: alephim/scheduler-api
-    tag: "0.1.2"
+    # Same od/vprogram-scheduling build as scheduler-rs above
+    # (vm_type=v_program filter on /api/v1/vms).
+    tag: "vprogram-rc1"
 
   aleph-vm:
-    # 1.13.0 is the first release with EIP-191 allocation auth (aleph-vm#945)
-    # and signer resolution from the network settings aggregate (aleph-vm#968,
-    # published by publish-settings-aggregate.sh).
-    version: "1.13.0"
+    # od/vprogram-integration-3 (aleph-vm#1142, deb-builder aggregation):
+    # od/snp-inst-4-agent (#1131 tip: dev with the V-PROGRAM stack, the
+    # agent-owned IPv6 path, the merged aleph.compose/1 runtime and the
+    # SNP-instances stack) plus the four validation-only commits that are
+    # not on dev yet: the attestation port map (#1079), port-forward
+    # healing on re-adoption (#1085), the update_refs V-PROGRAM fix and
+    # the agent run.py port-forward reconcile. Run 32361553700 proved the
+    # bare #1131 branch loses the attested endpoint without them.
+    branch: "od/vprogram-integration-3"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

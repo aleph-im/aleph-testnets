@@ -348,6 +348,11 @@ install_crn() {
         # No local AUTHORIZED_ALLOCATION_SIGNERS override: the supervisor sources
         # the Aleph-EIP191-V1 signers from the settings aggregate published at
         # SETTINGS_AGGREGATE_ADDRESS (aleph-vm#968).
+        # Force the two-process gRPC split: with this socket set, the agent
+        # dials the supervisor daemon over gRPC instead of embedding its own
+        # in-process VmPool. Both units read this file (the daemon binds the
+        # socket, the agent dials it). Without it the agent silently runs
+        # in-process and the gRPC connector is never exercised.
         cat > "$env_file" <<EOF
 ALEPH_VM_SUPERVISOR_HOST=0.0.0.0
 ALEPH_VM_DOMAIN_NAME=$ip
@@ -355,6 +360,7 @@ ALEPH_VM_API_SERVER=$CCN_URL
 ALEPH_VM_OWNER_ADDRESS=$CRN_OWNER_ADDR
 ALEPH_VM_SETTINGS_AGGREGATE_ADDRESS=$SETTINGS_AGGREGATE_ADDR
 ALEPH_VM_PROGRAM_MEMORY_RESERVED_MIB=2048
+ALEPH_VM_SUPERVISOR_GRPC_SOCKET=/var/lib/aleph/vm/supervisor.sock
 EOF
 
         # Static CRNs have no DO-provided IPv6 state file; detect the host's
@@ -376,8 +382,23 @@ EOF
             fi
         fi
 
-        # Configure IPv6 if the CRN has a public IPv6 address
-        if [ -f "$ipv6_file" ]; then
+        # Configure IPv6 if the CRN has a public IPv6 address.
+        #
+        # STATIC_CRN_IPV6_POOL overrides the derived pool for static CRNs.
+        # Needed on Scaleway Elastic Metal: the NATIVE /64 (what detection
+        # finds on the uplink) is inbound-routed but egress-filtered to the
+        # registered primary address, so VM-sourced replies silently never
+        # leave the fabric; an attached flexible-IP /64 uses the on-link
+        # NDP model the daemon's ndppd serves, and its egress is open (see
+        # aleph-vm docs/plans/2026-07-03-scaleway-ipv6-experiments.md,
+        # 2026-08-18 addendum).
+        if crn_is_static "$idx" && [ -n "${STATIC_CRN_IPV6_POOL:-}" ]; then
+            cat >> "$env_file" <<EOF
+ALEPH_VM_IPV6_ADDRESS_POOL=$STATIC_CRN_IPV6_POOL
+ALEPH_VM_IPV6_ALLOCATION_POLICY=dynamic
+EOF
+            echo "    IPv6 pool (override): $STATIC_CRN_IPV6_POOL"
+        elif [ -f "$ipv6_file" ]; then
             local ipv6_addr
             ipv6_addr=$(cat "$ipv6_file")
             # Derive the /64 prefix from the assigned address
@@ -399,11 +420,20 @@ EOF
 
         # Confidential computing (AMD SEV) support
         if crn_is_confidential "$idx"; then
+            # ALEPH_VM_SUPERVISOR_IMPL=rust: the V-PROGRAM SNP auto-launch
+            # only exists in the Rust supervisor daemon (lifecycle.rs derives
+            # the session dir, force-inserts the verity sidecar and builds the
+            # measured cmdline). The default python daemon parks the CVM
+            # execution waiting for an operator session dance that a
+            # V-PROGRAM never performs, so the VM never reaches RUNNING
+            # (observed on aleph-testnets#35 run 31378982391). Rust-only on
+            # this CRN; the DO CRNs stay on the default python daemon.
             cat >> "$env_file" <<EOF
 ALEPH_VM_ENABLE_CONFIDENTIAL_COMPUTING=true
 ALEPH_VM_SEV_CTL_PATH=/opt/sevctl
+ALEPH_VM_SUPERVISOR_IMPL=rust
 EOF
-            echo "    Confidential computing: enabled"
+            echo "    Confidential computing: enabled (rust supervisor impl)"
         fi
 
         # Copy config (via /tmp: the SSH user may not be root)

@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Fetch the prebuilt V-PROGRAM test fixtures for tests/test_vprograms.py.
 #
-# The runtime (bundle + manifest) is the 2026.08.18.2 build (Linux 6.18,
-# aleph-vm rev 39ec840a: v4-scoped udhcpc deconfig flush so the guest's
-# IPv6 link-local survives, aleph-vm#1126, on top of #1125's DAD wait;
-# measurement 952167b9..., platform roothash unchanged), published on Aleph mainnet native storage; native
-# storage is content-addressed by sha256, so the fetch URL doubles as the
-# pin. The fib workload still comes from the vprogram-fixtures-1 GitHub
-# prerelease (unchanged).
+# The runtime (bundle + manifest) is the 2026.08.20 build (Linux 6.18,
+# aleph-vm rev ba690c65 = #1131 tip: attest-agent secrets work + init
+# refactor on top of the 08-18 udhcpc fixes; measurement 04729caf...,
+# platform roothash unchanged), published on Aleph mainnet native storage;
+# native storage is content-addressed by sha256, so the fetch URL doubles
+# as the pin. The manifest template carries the MAINNET bundle ref (it is
+# the published manifest verbatim); conftest patches bundle.ref to the
+# per-run testnet STORE hash before uploading, so the stale ref is inert.
+# The fib workload is now the 2026-08-18 nix rebuild (same fib-service
+# behavior, nixpkgs 26.05 toolchain), fetched from mainnet storage like
+# the rest instead of the vprogram-fixtures-1 GitHub prerelease.
 #
 #   1. snp-image.tar.gz       — runtime bundle (OVMF, kernel, initrd,
 #                               dm-verity platform rootfs + hash tree)
@@ -25,20 +29,19 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$REPO_ROOT/.local/vprogram"
 
-RELEASE_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-1"
 ALEPH_STORAGE_URL="https://official.aleph.cloud/api/v0/storage/raw"
 
-# sha256 of every fixture. Aleph-storage assets are fetched by this hash;
-# release assets by name.
+# sha256 of every fixture; all assets are fetched from Aleph native storage
+# by this same hash.
 declare -A CHECKSUMS=(
-    [snp-image.tar.gz]="b2795ab58f23bf25674de56c6b821f0b78e0432ef716b3802830a43965d11bbe"
-    [manifest-template.json]="eb0dd8e9b118a36cd6f80d8c9903ae66fb02142c6b140987508aae5cc39e8a50"
-    [fib-workload.ext4]="5a04d7949c488acbd909d2a63190fc9810d0d61263274c294b714625f8193db0"
+    [snp-image.tar.gz]="6a19d1709333cd4ac5e31708432e6c9d2c9241f9e726dc44865b2a7fe9691fad"
+    [manifest-template.json]="852c7b13745936fb80dc662ca169dfa417132fcff4f80c295cbe8573f8c5825c"
+    [fib-workload.ext4]="9b9c4ffe03b35ecec6ae418180e298f1f89fd74b71b9c77371271e43d0d619b0"
 )
 declare -A SOURCES=(
-    [snp-image.tar.gz]="$ALEPH_STORAGE_URL/b2795ab58f23bf25674de56c6b821f0b78e0432ef716b3802830a43965d11bbe"
-    [manifest-template.json]="$ALEPH_STORAGE_URL/eb0dd8e9b118a36cd6f80d8c9903ae66fb02142c6b140987508aae5cc39e8a50"
-    [fib-workload.ext4]="$RELEASE_URL/fib-workload.ext4"
+    [snp-image.tar.gz]="$ALEPH_STORAGE_URL/6a19d1709333cd4ac5e31708432e6c9d2c9241f9e726dc44865b2a7fe9691fad"
+    [manifest-template.json]="$ALEPH_STORAGE_URL/852c7b13745936fb80dc662ca169dfa417132fcff4f80c295cbe8573f8c5825c"
+    [fib-workload.ext4]="$ALEPH_STORAGE_URL/9b9c4ffe03b35ecec6ae418180e298f1f89fd74b71b9c77371271e43d0d619b0"
 )
 
 mkdir -p "$OUT_DIR"

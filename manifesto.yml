@@ -6,25 +6,26 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    # 0.10.3-rc7 is the first pinned release with V-PROGRAM support: message
-    # handler (handlers/content/vprogram.py), vms DB migration 0064 and the
-    # V-PROGRAM cost model.
-    tag: "0.10.3-rc7"
+    # 0.10.3-rc8 (2026-08-14), latest prerelease; rc7 was the first with
+    # V-PROGRAM support (handlers/content/vprogram.py, vms DB migration 0064,
+    # V-PROGRAM cost model).
+    tag: "0.10.3-rc8"
 
   p2p-service:
     image: alephim/p2p-service
     tag: "0.1.5"
 
   aleph-cli:
-    # 0.17.0-rc9: TCB floors recalibrated to AMD's published EntrySign
-    # (SB-3019) mitigation minimums (aleph-rs#340): Zen4c 28 -> 25,
-    # Milan 213 -> 219 (the old value accepted EntrySign-vulnerable Milan
-    # hosts), plus stepping-aware floors for Milan-X/Genoa-X. The testnet
+    # 0.17.0-rc10: `vprogram create --compose` (aleph.compose/1 workload
+    # builder, aleph-rs#344), fresh-nonce liveness challenge in vprogram
+    # call (#342), AMD chain validity windows + KDS CRL revocation (#343),
+    # explicit measurement/policy pins (#345) and PLATFORM_INFO posture
+    # gating. Keeps rc9's recalibrated EntrySign TCB floors; the testnet
     # TEE host still sits at SPL 21 (< 25) pending its Scaleway BIOS
     # update, so the test passes --min-tcb/--accept-outdated-tcb for now
     # (see tests/test_vprograms.py TCB_FLOOR_ARGS).
-    version: "0.17.0-rc9"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc9/aleph-cli-linux-x86_64"
+    version: "0.17.0-rc10"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc10/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer
@@ -50,14 +51,12 @@ components:
     tag: "vprogram-rc1"
 
   aleph-vm:
-    # od/vprogram-integration-2 (aleph-vm#1124, supersedes #1114's
-    # od/vprogram-integration): current dev, which now includes the whole
-    # V-PROGRAM stack (#1050, #1052, #1071, #1077, #1082, #1083) plus the
-    # static-IPv6 DHCPv6 guest path (#1087), with the still-pending pieces
-    # merged on top: attestation port map (#1079), port-forward healing on
-    # re-adoption (#1085), measured workload-volume guest init, and the
-    # update_refs V-PROGRAM fix.
-    branch: "od/vprogram-integration-2"
+    # od/snp-inst-4-agent (aleph-vm#1131 tip, ba690c65): current dev (the
+    # whole V-PROGRAM stack, the agent-owned IPv6 path and the merged
+    # aleph.compose/1 runtime, #1132) plus the SNP-instances stack
+    # (#1129/#1130/#1131: owner auth, instance images, supervisor + agent
+    # launch paths for mode=sev_snp).
+    branch: "od/snp-inst-4-agent"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

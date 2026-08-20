@@ -6,26 +6,30 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    # 0.10.3-rc8 (2026-08-14), latest prerelease; rc7 was the first with
-    # V-PROGRAM support (handlers/content/vprogram.py, vms DB migration 0064,
-    # V-PROGRAM cost model).
-    tag: "0.10.3-rc8"
+    # 0.10.3-rc9 (2026-08-20): V-PROGRAM store dependencies checked at
+    # processing time (pyaleph#1234) and measurement registers adopted from
+    # aleph-message (pyaleph#1245). The registers schema must move in
+    # lockstep with aleph-cli rc11 and the aleph-vm branch below.
+    tag: "0.10.3-rc9"
 
   p2p-service:
     image: alephim/p2p-service
     tag: "0.1.5"
 
   aleph-cli:
-    # 0.17.0-rc10: `vprogram create --compose` (aleph.compose/1 workload
-    # builder, aleph-rs#344), fresh-nonce liveness challenge in vprogram
-    # call (#342), AMD chain validity windows + KDS CRL revocation (#343),
-    # explicit measurement/policy pins (#345) and PLATFORM_INFO posture
-    # gating. Keeps rc9's recalibrated EntrySign TCB floors; the testnet
-    # TEE host still sits at SPL 21 (< 25) pending its Scaleway BIOS
-    # update, so the test passes --min-tcb/--accept-outdated-tcb for now
-    # (see tests/test_vprograms.py TCB_FLOOR_ARGS).
-    version: "0.17.0-rc10"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc10/aleph-cli-linux-x86_64"
+    # 0.17.0-rc11: measurement registers instead of a scalar digest on
+    # V-PROGRAM messages (aleph-rs#349); must match pyaleph rc9 and the
+    # aleph-vm branch below. Carries rc10's `vprogram create --compose`
+    # (#344), fresh-nonce liveness (#342), AMD chain validity + KDS CRL
+    # revocation (#343), measurement/policy pins (#345) and the EntrySign
+    # TCB floors. The testnet TEE host still sits at SPL 21 (< 25; the
+    # 2026-08-20 Scaleway intervention updated SEV fw to 1.55.39 but not
+    # the microcode), so the tests keep --min-tcb/--accept-outdated-tcb
+    # (see tests/test_vprograms.py TCB_FLOOR_ARGS). The digest-save
+    # archive bug (aleph-rs#348) is NOT in rc11; the compose test keeps
+    # its tagged --image-archive workaround.
+    version: "0.17.0-rc11"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc11/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer
@@ -37,28 +41,27 @@ components:
 
   scheduler-rs:
     image: alephim/scheduler-rs
-    # vprogram-rc1 = 0.1.2 (v2 executions polling, scheduler#188) plus
-    # V-PROGRAM scheduling (scheduler#193): ingestion, VmType::VProgram,
-    # SEV-SNP capability matching and the v_programs allocation bucket
-    # (matches aleph-vm#1052's /control/allocations wire model). One-off
-    # image published from the od/vprogram-scheduling branch.
-    tag: "vprogram-rc1"
+    # vprogram-rc2 (2026-08-20): refreshed od/vprogram-scheduling build on
+    # top of rc1 (0.1.2 + scheduler#193 V-PROGRAM scheduling: ingestion,
+    # VmType::VProgram, SEV-SNP capability matching, the v_programs
+    # allocation bucket).
+    tag: "vprogram-rc2"
 
   scheduler-api:
     image: alephim/scheduler-api
-    # Same od/vprogram-scheduling build as scheduler-rs above
+    # Same vprogram-rc2 od/vprogram-scheduling build as scheduler-rs above
     # (vm_type=v_program filter on /api/v1/vms).
-    tag: "vprogram-rc1"
+    tag: "vprogram-rc2"
 
   aleph-vm:
     # od/vprogram-integration-3 (aleph-vm#1142, deb-builder aggregation):
-    # od/snp-inst-4-agent (#1131 tip: dev with the V-PROGRAM stack, the
-    # agent-owned IPv6 path, the merged aleph.compose/1 runtime and the
-    # SNP-instances stack) plus the four validation-only commits that are
+    # dev tip 2df8d87e (V-PROGRAM stack, aleph.compose/1 runtime, the full
+    # SNP-instances stack through #1131 and the measurement-registers
+    # adoption #1143/#1146) plus the four validation-only commits that are
     # not on dev yet: the attestation port map (#1079), port-forward
     # healing on re-adoption (#1085), the update_refs V-PROGRAM fix and
     # the agent run.py port-forward reconcile. Run 32361553700 proved the
-    # bare #1131 branch loses the attested endpoint without them.
+    # branch loses the attested endpoint without them.
     branch: "od/vprogram-integration-3"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"

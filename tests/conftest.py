@@ -509,3 +509,29 @@ def vprogram_runtime_hash(aleph_cli, vprogram_dir, tmp_path_factory) -> str:
     out = tmp_path_factory.mktemp("vprogram") / "manifest.json"
     out.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
     return _upload_with_balance_retry(aleph_cli, str(out), "V-PROGRAM runtime manifest")
+
+
+@pytest.fixture(scope="session")
+def vprogram_compose_runtime_hash(aleph_cli, vprogram_dir, tmp_path_factory) -> str:
+    """Upload the aleph.compose/1 runtime bundle + manifest; return the
+    manifest's STORE item hash (what `vprogram create --compose --runtime`
+    pins).
+
+    Same two-step dance as vprogram_runtime_hash. The 297 MB compose bundle
+    exceeds the CLI's 100 MiB native-storage DEFAULT cutoff, but the forced
+    `--storage-engine storage` in _upload_with_balance_retry bypasses the
+    auto-selection and the testnet CCN's config raises max_file_size to
+    4 GiB (deploy/config.yml.tpl), so it stays on the sha256-addressed
+    native path the CRN downloads from."""
+    bundle_hash = _upload_with_balance_retry(
+        aleph_cli,
+        os.path.join(vprogram_dir, "compose-image.tar.gz"),
+        "Compose runtime bundle",
+        timeout=600,
+    )
+    with open(os.path.join(vprogram_dir, "compose-manifest-template.json")) as f:
+        manifest = json.load(f)
+    manifest["bundle"]["ref"] = bundle_hash
+    out = tmp_path_factory.mktemp("vprogram-compose") / "manifest.json"
+    out.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
+    return _upload_with_balance_retry(aleph_cli, str(out), "Compose runtime manifest")

@@ -15,7 +15,9 @@ permissions:
 jobs:
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Two SEV-SNP V-PROGRAM boots (exec + compose, each with a runtime
+    # bundle download on the TEE server) push the suite past the old 60.
+    timeout-minutes: 75
     environment: digitalocean
     # Serialize across ALL runs (not just per-PR): the static TEE server can
     # only host one CI run at a time. Caveat: GitHub keeps a single pending

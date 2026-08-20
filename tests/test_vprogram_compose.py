@@ -25,10 +25,24 @@ from tests.test_vprograms import CREATE_WAIT_SECS, TCB_FLOOR_ARGS, _vprogram_mes
 
 # One service, host networking (required by the aleph.compose/1 subset),
 # serving plain HTTP on the runtime's fixed 127.0.0.1:8080 upstream.
-COMPOSE_YML = """\
+#
+# The image is supplied via --image-archive with a TAGGED save rather than
+# the CLI's own pull-and-digest-pin path: rc10's docker fallback saves the
+# archive from the digest-pinned ref, and `docker save name@sha256:...`
+# writes RepoTags: null, so the guest's `podman load` imports a bare image
+# ID that podman-compose cannot match against the pinned `image:` string
+# ("short-name did not resolve to an alias", no registries.conf in the
+# measured rootfs, fail-closed poweroff). A tagged archive round-trips:
+# podman load restores the tag and compose resolves it from local storage
+# (verified in a local qemu boot of the 2026.08.20 compose runtime).
+# Integrity is unaffected, the archive bytes are part of the verity-measured
+# workload volume either way. Drop the workaround once the CLI saves
+# archives under a reference podman can match.
+WHOAMI_IMAGE = "traefik/whoami:v1.10.2"
+COMPOSE_YML = f"""\
 services:
   whoami:
-    image: traefik/whoami:v1.10.2
+    image: {WHOAMI_IMAGE}
     command: ["--port", "8080"]
     network_mode: host
 """
@@ -40,9 +54,16 @@ def test_vprogram_compose_deploy_and_attested_call(
     compose_file = tmp_path / "docker-compose.yml"
     compose_file.write_text(COMPOSE_YML)
 
+    archive = tmp_path / "whoami.tar"
+    subprocess.run(["docker", "pull", WHOAMI_IMAGE], check=True, capture_output=True, timeout=300)
+    subprocess.run(
+        ["docker", "save", "-o", str(archive), WHOAMI_IMAGE], check=True, capture_output=True, timeout=300
+    )
+
     result = aleph_cli(
         "--json", "vprogram", "create",
         "--compose", str(compose_file),
+        "--image-archive", f"{WHOAMI_IMAGE}={archive}",
         "--runtime", vprogram_compose_runtime_hash,
         "--chain", "eth",
         "--wait", str(CREATE_WAIT_SECS),

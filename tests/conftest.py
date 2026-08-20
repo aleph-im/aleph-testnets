@@ -334,7 +334,7 @@ def confidential_password() -> str:
     return os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_PASSWORD", "test-password")
 
 
-def _upload_with_balance_retry(aleph_cli, path: str, what: str, timeout: float = 180) -> str:
+def _upload_with_balance_retry(aleph_cli, path: str, what: str, timeout: float = 420) -> str:
     """Upload a file, retrying while the CCN reports 'Insufficient balance'.
 
     On a fresh testnet the account funding flows through nodestatus-balances

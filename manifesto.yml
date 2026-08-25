@@ -59,7 +59,11 @@ components:
     # SNP-instances stack via #1131, measurement registers #1143/#1146
     # with the packaging pin #1147, and the validation agent fixes via
     # #1148), plus the 2026-08-24 batch: measured-CPU SNP launch (#1145),
-    # agent-owned VM disks (#1149) and the SNP vCPU probe retry (#1150).
+    # agent-owned VM disks (#1149) and the SNP vCPU probe retry (#1150),
+    # plus the 2026-08-25 batch: agent-side backups with supervisor guest
+    # quiescence (#1151), disk admission before resource download (#1153),
+    # dead proto reservations dropped (#1154) and FAILED reporting for a
+    # controller unit that died (#1152).
     branch: "dev"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"

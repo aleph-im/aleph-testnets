@@ -468,6 +468,18 @@ def test_supervisor_impl_swap_preserves_running_instance(
     )
     try:
         host = vm.crn_host
+        # Only a split-package (2.0) deb ships the implementation launcher;
+        # on a node scenario A failed to upgrade the swap cannot mean anything.
+        launcher = _crn_run(
+            crn_ssh_key, host,
+            "test -x /opt/aleph-vm/bin/supervisor-launcher && echo present || true",
+        ).strip()
+        if launcher != "present":
+            pytest.fail(
+                f"{host} runs aleph-vm {_aleph_vm_version(crn_ssh_key, host)} without "
+                "/opt/aleph-vm/bin/supervisor-launcher: the node was not upgraded "
+                "to the candidate deb (did scenario A fail before the upgrade?)"
+            )
         wait_for_ssh(private_key_path, host, vm.ssh_port, timeout=120)
         marker = _write_marker(private_key_path, vm)
 

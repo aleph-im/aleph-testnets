@@ -636,6 +636,35 @@ register_crn() {
         echo "    CRN hash: $crn_hash"
         echo "$crn_hash" > "$(crn_dir "$idx")/crn-hash"
 
+        # Update supervisor.env with node hash and restart BEFORE linking.
+        # Linking (staking) is what makes the scheduler start polling this
+        # node, and its node watcher has no reschedule trigger for an
+        # unreachable node becoming reachable: a first poll landing in the
+        # restart window marks the node Unreachable and every VM message that
+        # arrives before unrelated churn stays unscheduled (upgrade-check run
+        # 33010889646 lost its first instance to a 5 min wait this way).
+        # Restart first, wait for the API, then stake a node that is serving.
+        echo "    Setting ALEPH_VM_NODE_HASH on CRN..."
+        ssh_crn "$idx" "grep -q ALEPH_VM_NODE_HASH /etc/aleph-vm/supervisor.env && \
+            sed -i 's/^ALEPH_VM_NODE_HASH=.*/ALEPH_VM_NODE_HASH=$crn_hash/' /etc/aleph-vm/supervisor.env || \
+            echo 'ALEPH_VM_NODE_HASH=$crn_hash' >> /etc/aleph-vm/supervisor.env"
+        ssh_crn "$idx" "systemctl restart aleph-vm-supervisor.service"
+
+        echo "    Waiting for the CRN API to answer..."
+        local serving=false
+        for _ in $(seq 1 30); do
+            if ssh_crn "$idx" "curl -sf -o /dev/null http://localhost:4020/about/usage/system" 2>/dev/null; then
+                serving=true
+                break
+            fi
+            sleep 5
+        done
+        if ! $serving; then
+            echo "    ERROR: CRN API did not come back within 150s of the restart." >&2
+            ssh_crn "$idx" "journalctl -u aleph-vm-supervisor.service --no-pager -n 50" || true
+            continue
+        fi
+
         # Link CRN to CCN
         echo "    Linking CRN to CCN..."
         ALEPH_PRIVATE_KEY="$CRN_OWNER_KEY" "$aleph_cli" \
@@ -643,13 +672,6 @@ register_crn() {
             node link --crn "$crn_hash" --chain eth 2>"$err_log" || {
             echo "    WARNING: link failed: $(cat "$err_log")"
         }
-
-        # Update supervisor.env with node hash
-        echo "    Setting ALEPH_VM_NODE_HASH on CRN..."
-        ssh_crn "$idx" "grep -q ALEPH_VM_NODE_HASH /etc/aleph-vm/supervisor.env && \
-            sed -i 's/^ALEPH_VM_NODE_HASH=.*/ALEPH_VM_NODE_HASH=$crn_hash/' /etc/aleph-vm/supervisor.env || \
-            echo 'ALEPH_VM_NODE_HASH=$crn_hash' >> /etc/aleph-vm/supervisor.env"
-        ssh_crn "$idx" "systemctl restart aleph-vm-supervisor.service"
 
         echo "    CRN $crn_name_str registered and linked."
     done

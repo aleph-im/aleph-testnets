@@ -334,7 +334,7 @@ def confidential_password() -> str:
     return os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_PASSWORD", "test-password")
 
 
-def _upload_with_balance_retry(aleph_cli, path: str, what: str, timeout: float = 180) -> str:
+def _upload_with_balance_retry(aleph_cli, path: str, what: str, timeout: float = 420) -> str:
     """Upload a file, retrying while the CCN reports 'Insufficient balance'.
 
     On a fresh testnet the account funding flows through nodestatus-balances
@@ -472,3 +472,66 @@ def crn_nodes(aleph_cli):
     if len(nodes) < 2:
         pytest.skip(f"Need at least 2 CRNs for migration tests, found {len(nodes)}")
     return nodes
+
+
+# -- V-PROGRAM fixtures -------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def vprogram_dir() -> str:
+    """Directory holding the prebuilt V-PROGRAM fixtures (runtime bundle,
+    manifest template, fib-service workload), prepared by
+    scripts/vprogram-artifacts.sh. tests/test_vprograms.py skips without it."""
+    path = os.environ.get("ALEPH_TESTNET_VPROGRAM_DIR", "")
+    if not path or not os.path.isdir(path):
+        pytest.skip("No V-PROGRAM fixtures — requires ALEPH_TESTNET_VPROGRAM_DIR")
+    return path
+
+
+@pytest.fixture(scope="session")
+def vprogram_runtime_hash(aleph_cli, vprogram_dir, tmp_path_factory) -> str:
+    """Upload the runtime bundle + manifest; return the manifest's STORE item
+    hash (what `vprogram create --runtime` pins).
+
+    The manifest template ships with bundle.ref zeroed because the bundle's
+    STORE hash only exists after this run's upload. The CRN downloads the
+    bundle by its sha256 (the native-storage path), which the template already
+    pins, but ref is patched to the real message hash anyway to keep the
+    published manifest honest."""
+    bundle_hash = _upload_with_balance_retry(
+        aleph_cli,
+        os.path.join(vprogram_dir, "snp-image.tar.gz"),
+        "V-PROGRAM runtime bundle",
+        timeout=300,
+    )
+    with open(os.path.join(vprogram_dir, "manifest-template.json")) as f:
+        manifest = json.load(f)
+    manifest["bundle"]["ref"] = bundle_hash
+    out = tmp_path_factory.mktemp("vprogram") / "manifest.json"
+    out.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
+    return _upload_with_balance_retry(aleph_cli, str(out), "V-PROGRAM runtime manifest")
+
+
+@pytest.fixture(scope="session")
+def vprogram_compose_runtime_hash(aleph_cli, vprogram_dir, tmp_path_factory) -> str:
+    """Upload the aleph.compose/1 runtime bundle + manifest; return the
+    manifest's STORE item hash (what `vprogram create --compose --runtime`
+    pins).
+
+    Same two-step dance as vprogram_runtime_hash. The 297 MB compose bundle
+    exceeds the CLI's 100 MiB native-storage DEFAULT cutoff, but the forced
+    `--storage-engine storage` in _upload_with_balance_retry bypasses the
+    auto-selection and the testnet CCN's config raises max_file_size to
+    4 GiB (deploy/config.yml.tpl), so it stays on the sha256-addressed
+    native path the CRN downloads from."""
+    bundle_hash = _upload_with_balance_retry(
+        aleph_cli,
+        os.path.join(vprogram_dir, "compose-image.tar.gz"),
+        "Compose runtime bundle",
+        timeout=600,
+    )
+    with open(os.path.join(vprogram_dir, "compose-manifest-template.json")) as f:
+        manifest = json.load(f)
+    manifest["bundle"]["ref"] = bundle_hash
+    out = tmp_path_factory.mktemp("vprogram-compose") / "manifest.json"
+    out.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
+    return _upload_with_balance_retry(aleph_cli, str(out), "Compose runtime manifest")

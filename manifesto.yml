@@ -6,15 +6,29 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    tag: "0.10.2-rc5"
+    # 0.10.3-rc9 (2026-08-20): V-PROGRAM store dependencies checked at
+    # processing time (pyaleph#1234) and measurement registers adopted from
+    # aleph-message (pyaleph#1245). The registers schema must move in
+    # lockstep with aleph-cli rc11 and the aleph-vm branch below.
+    tag: "0.10.3-rc9"
 
   p2p-service:
     image: alephim/p2p-service
     tag: "0.1.5"
 
   aleph-cli:
-    version: "0.11.1"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.11.1/aleph-cli-linux-x86_64"
+    # 0.17.0-rc11: measurement registers instead of a scalar digest on
+    # V-PROGRAM messages (aleph-rs#349); must match pyaleph rc9 and the
+    # aleph-vm branch below. Carries rc10's `vprogram create --compose`
+    # (#344), fresh-nonce liveness (#342), AMD chain validity + KDS CRL
+    # revocation (#343), measurement/policy pins (#345) and the EntrySign
+    # TCB floors, enforced for real since the TEE host (Siena/Zen4c) came
+    # back at microcode SPL 28 on 2026-08-24, above the 25 Zen4c floor;
+    # the tests no longer pass --min-tcb/--accept-outdated-tcb. The digest-save
+    # archive bug (aleph-rs#348) is NOT in rc11; the compose test keeps
+    # its tagged --image-archive workaround.
+    version: "0.17.0-rc11"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc11/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer
@@ -26,17 +40,30 @@ components:
 
   scheduler-rs:
     image: alephim/scheduler-rs
-    tag: "0.1.2"
+    # vprogram-rc3 (2026-08-24): refreshed od/vprogram-scheduling build on
+    # top of rc2 (0.1.2 + scheduler#193 V-PROGRAM scheduling: ingestion,
+    # VmType::VProgram, SEV-SNP capability matching, the v_programs
+    # allocation bucket).
+    tag: "vprogram-rc3"
 
   scheduler-api:
     image: alephim/scheduler-api
-    tag: "0.1.2"
+    # Same vprogram-rc3 od/vprogram-scheduling build as scheduler-rs above
+    # (vm_type=v_program filter on /api/v1/vms).
+    tag: "vprogram-rc3"
 
   aleph-vm:
-    # 1.13.0 is the first release with EIP-191 allocation auth (aleph-vm#945)
-    # and signer resolution from the network settings aggregate (aleph-vm#968,
-    # published by publish-settings-aggregate.sh).
-    version: "1.13.0"
+    # Plain dev: everything the validated aggregation branch carried is
+    # now merged (V-PROGRAM stack incl. aleph.compose/1 runtime and the
+    # SNP-instances stack via #1131, measurement registers #1143/#1146
+    # with the packaging pin #1147, and the validation agent fixes via
+    # #1148), plus the 2026-08-24 batch: measured-CPU SNP launch (#1145),
+    # agent-owned VM disks (#1149) and the SNP vCPU probe retry (#1150),
+    # plus the 2026-08-25 batch: agent-side backups with supervisor guest
+    # quiescence (#1151), disk admission before resource download (#1153),
+    # dead proto reservations dropped (#1154) and FAILED reporting for a
+    # controller unit that died (#1152).
+    branch: "dev"
     # To deploy from a Git branch instead of a release, replace `version` with:
     #   branch: "my-feature-branch"
     # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).

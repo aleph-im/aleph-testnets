@@ -15,7 +15,9 @@ permissions:
 jobs:
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Two SEV-SNP V-PROGRAM boots (exec + compose, each with a runtime
+    # bundle download on the TEE server) push the suite past the old 60.
+    timeout-minutes: 75
     environment: digitalocean
     # Serialize across ALL runs (not just per-PR): the static TEE server can
     # only host one CI run at a time. Caveat: GitHub keeps a single pending
@@ -77,6 +79,7 @@ jobs:
             --region ams3 \
             --ssh-keys ${{ vars.DO_SSH_KEY_FINGERPRINT }} \
             --tag-name testnets-ci \
+            --enable-ipv6 \
             --wait \
             "$CCN_NAME" &
           CCN_PID=$!
@@ -160,7 +163,7 @@ jobs:
               chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
               echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' > /etc/apt/sources.list.d/github-cli.list"
             ssh root@${DROPLET_IPV4} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 update"
-            ssh root@${DROPLET_IPV4} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io docker-compose-v2 python3-pip jq curl gh"
+            ssh root@${DROPLET_IPV4} "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=-1 install -y docker.io docker-compose-v2 python3-pip jq curl gh cryptsetup-bin"
             # Let sshd settle in case apt restarted it anyway.
             for i in $(seq 1 20); do ssh root@${DROPLET_IPV4} true 2>/dev/null && break; sleep 3; done
           ) &
@@ -264,10 +267,14 @@ jobs:
           # this handles vm-connector, .deb download, supervisor config).
           # GH_TOKEN lets crn-up.sh fetch the aleph-vm .deb from CI artifacts
           # when manifesto.yml pins a branch instead of a release.
+          # STATIC_CRN_IPV6_POOL: the TEE server's attached flexible-IP /64.
+          # The native /64 is egress-filtered per address on Elastic Metal
+          # (VM replies never leave the fabric); see crn-up.sh.
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
             CCN_URL=http://${DROPLET_IPV4}:4024 \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             CRN_COUNT=${CRN_COUNT} \
+            STATIC_CRN_IPV6_POOL=2001:bc8:702:32d::/64 \
             GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             bash scripts/crn-up.sh --install"
 
@@ -280,15 +287,22 @@ jobs:
 
       - name: Prepare confidential VM artifacts
         run: |
-          # SEVCTL_HOST = CRN 0 (ubuntu-24.04): same distro as the CCN, so its
-          # sevctl is guaranteed to run there, unlike the TEE server's, whose
-          # distro (and glibc) may be newer.
+          # SEVCTL_HOST = CRN 0 (ubuntu-24.04): all CRNs, the CCN and the static
+          # TEE server now run Ubuntu 24.04, so its sevctl glibc baseline matches
+          # everywhere it runs.
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
             TEE_HOST='${{ secrets.AMD_SEV_SNP_HOST }}' \
             TEE_USER='${{ secrets.AMD_SEV_SNP_USER }}' \
             SEVCTL_HOST='${CRN_0_IPV4}' \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             bash scripts/confidential-artifacts.sh"
+
+      - name: Prepare V-PROGRAM artifacts
+        run: |
+          # Prebuilt runtime bundle + fib-service workload from the
+          # vprogram-fixtures release; tests/test_vprograms.py skips when
+          # .local/vprogram is absent (local-up.sh exports its path).
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/vprogram-artifacts.sh"
 
       - name: Run tests
         run: |
@@ -321,18 +335,107 @@ jobs:
         run: |
           TEE_HOST="${{ secrets.AMD_SEV_SNP_HOST }}"
           TEE_USER="${{ secrets.AMD_SEV_SNP_USER }}"
-          # -n 5000 so the supervisor's startup settings dump
-          # (--print-settings) from this run's install is captured. The
-          # controller units carry each VM's qemu stdout (-serial stdio),
-          # i.e. the guest boot console — essential for debugging VMs that
-          # never reach SSH.
-          if [ "$TEE_USER" = "root" ]; then
-            ssh "root@$TEE_HOST" "journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
-            ssh "root@$TEE_HOST" "journalctl -u 'aleph-vm-controller@*' --no-pager -n 3000" > tee-controllers.txt 2>&1 || true
-          else
-            ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
-            ssh "$TEE_USER@$TEE_HOST" "sudo -n journalctl -u 'aleph-vm-controller@*' --no-pager -n 3000" > tee-controllers.txt 2>&1 || true
-          fi
+          # --since (not -n): the supervisor crash-loops noisily during the
+          # static-server reinstall, which blows a fixed -n budget before the
+          # test window. Also capture the agent — in the two-service split it
+          # serves /control/* and /v2/about/executions/list, so the confidential
+          # create/registration (and any error) surfaces there, not in the
+          # supervisor daemon. Controller units carry each VM's qemu serial console.
+          since="45 min ago"
+          if [ "$TEE_USER" = "root" ]; then SSH="ssh root@$TEE_HOST"; SUDO=""; else SSH="ssh $TEE_USER@$TEE_HOST"; SUDO="sudo -n "; fi
+          $SSH "${SUDO}journalctl -u aleph-vm-supervisor.service --no-pager --since '$since'" > tee-supervisor.txt 2>&1 || true
+          $SSH "${SUDO}journalctl -u aleph-vm-agent.service --no-pager --since '$since'" > tee-agent.txt 2>&1 || true
+          $SSH "${SUDO}journalctl -u 'aleph-vm-controller@*' --no-pager --since '$since'" > tee-controllers.txt 2>&1 || true
+
+      - name: Collect TEE network diagnostics
+        if: always()
+        run: |
+          # Host-level view of the V-PROGRAM attestation-port DNAT: rule set,
+          # interfaces, listeners, then live probes (host -> guest :8443
+          # directly, and this runner -> public endpoint through the DNAT).
+          # Diagnoses reachability failures the test can only see as
+          # 'error sending request'.
+          TEE_HOST="${{ secrets.AMD_SEV_SNP_HOST }}"
+          TEE_USER="${{ secrets.AMD_SEV_SNP_USER }}"
+          if [ "$TEE_USER" = "root" ]; then SSH="ssh root@$TEE_HOST"; SUDO=""; else SSH="ssh $TEE_USER@$TEE_HOST"; SUDO="sudo -n "; fi
+          {
+            echo "=== nft ruleset ==="
+            $SSH "${SUDO}nft list ruleset" || true
+            echo "=== ip addr ==="
+            $SSH "ip addr" || true
+            echo "=== ip route ==="
+            $SSH "ip route" || true
+            echo "=== ss -tlnp ==="
+            $SSH "${SUDO}ss -tlnp" || true
+            # IPv6 path (aleph-vm#1087): the guest holds a /124 next to the
+            # host tap address; inbound needs ndppd to proxy-answer NDP for
+            # that range on the uplink. Capture every piece, then probe the
+            # guest's v6 from the host itself (bypasses ndppd/upstream: a
+            # host-side 200 with an external timeout means NDP proxying is
+            # the broken link; a host-side failure means the guest v6 stack
+            # is).
+            echo "=== ip -6 route ==="
+            $SSH "ip -6 route" || true
+            echo "=== ip -6 neigh show proxy ==="
+            $SSH "ip -6 neigh show proxy" || true
+            echo "=== ndppd status ==="
+            $SSH "systemctl status ndppd --no-pager -n 20" || true
+            echo "=== ndppd config ==="
+            $SSH "cat /etc/ndppd.conf" || true
+            echo "=== sysctl proxy_ndp/forwarding ==="
+            $SSH "sysctl net.ipv6.conf.all.proxy_ndp net.ipv6.conf.all.forwarding" || true
+            $SSH "ip addr" | grep -oE '2[0-9a-f:]+::[0-9a-f]+0/124' | while read -r cidr; do
+              guest6=$(python3 -c "import ipaddress,sys; n=ipaddress.ip_interface('$cidr'); print(n.ip + 1)")
+              echo "=== probe: TEE host -> guest [$guest6]:8443 (v6, no ndppd involved) ==="
+              $SSH "curl -6ks --max-time 5 -o /dev/null -w '%{http_code}\n' https://[$guest6]:8443/health" || true
+              echo "=== probe: CCN droplet -> guest [$guest6]:8443 (v6, full path incl. ndppd) ==="
+              ssh "root@${DROPLET_IPV4}" "curl -6ks --max-time 5 -o /dev/null -w '%{http_code}\n' https://[$guest6]:8443/health; ip -6 route show default | head -1" || true
+              # Ground truth for the external path. Established so far:
+              # Scaleway ROUTES the whole /64 to the host (external SYNs for
+              # the guest arrive with no NDP involved), the ip6 forward path
+              # is open (policy accept), and dnsmasq's RA carries a real
+              # router lifetime (netns-verified on this host). Capture
+              # TCP:8443 on BOTH the uplink and the tap during a droplet
+              # probe to localize the drop: SYN on uplink only = host does
+              # not forward; SYN on tap without SYN-ACK = guest does not
+              # reply (route/firewall); SYN-ACK on tap and uplink with the
+              # probe still failing = the fabric drops guest-sourced egress.
+              uplink=$(grep -oE '^proxy [a-z0-9]+' tee-network.txt | head -1 | awk '{print $2}')
+              tap=$(grep -oE 'iface vmtap[0-9]+' tee-network.txt | head -1 | awk '{print $2}')
+              if [ -n "$uplink" ] && [ -n "$tap" ]; then
+                echo "=== dual capture ($uplink + $tap) during droplet probe of [$guest6]:8443 ==="
+                $SSH "command -v tcpdump >/dev/null || ${SUDO}apt-get install -y -q tcpdump >/dev/null 2>&1" || true
+                $SSH "${SUDO}sh -c 'nohup timeout 60 tcpdump -lni $uplink \"ip6 and tcp port 8443\" > /tmp/v6-uplink.txt 2>&1 &'" || true
+                $SSH "${SUDO}sh -c 'nohup timeout 60 tcpdump -lni $tap \"ip6 and tcp port 8443\" > /tmp/v6-tap.txt 2>&1 &'" || true
+                sleep 4
+                ssh "root@${DROPLET_IPV4}" "curl -6ks --max-time 10 -o /dev/null -w 'droplet-probe: %{http_code}\n' https://[$guest6]:8443/health" || true
+                sleep 4
+                $SSH "${SUDO}pkill -f 'tcpdump -lni'" || true
+                echo "=== uplink capture ==="
+                $SSH "cat /tmp/v6-uplink.txt" || true
+                echo "=== tap capture ==="
+                $SSH "cat /tmp/v6-tap.txt" || true
+              fi
+            done
+          } > tee-network.txt 2>&1
+          # Probe EVERY attestation DNAT rule: stale rules from earlier runs
+          # survive on the static server, so only probing one can test a
+          # leftover mapping instead of this run's.
+          grep -E "dnat.*:8443" tee-network.txt | while read -r rule; do
+            echo "attestation DNAT rule: $rule" >> tee-network.txt
+            guest_ip=$(echo "$rule" | grep -oE '172\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            host_port=$(echo "$rule" | grep -oE 'dport [0-9]+' | head -1 | awk '{print $2}')
+            {
+              if [ -n "$guest_ip" ]; then
+                echo "=== probe: TEE host -> guest $guest_ip:8443 ==="
+                $SSH "curl -ks --max-time 5 -o /dev/null -w '%{http_code}\n' https://$guest_ip:8443/health" || true
+              fi
+              if [ -n "$host_port" ]; then
+                echo "=== probe: runner -> TEE:$host_port (through DNAT) ==="
+                curl -ks --max-time 5 -o /dev/null -w '%{http_code}\n' "https://$TEE_HOST:$host_port/health" || true
+              fi
+            } >> tee-network.txt 2>&1
+          done
 
       - name: Upload artifacts
         if: always()
@@ -345,7 +448,9 @@ jobs:
             crn*-supervisor.txt
             crn*-vm-connector.txt
             tee-supervisor.txt
+            tee-agent.txt
             tee-controllers.txt
+            tee-network.txt
 
       - name: Reset TEE server
         if: always()

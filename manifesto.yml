@@ -22,10 +22,9 @@ components:
     # aleph-vm branch below. Carries rc10's `vprogram create --compose`
     # (#344), fresh-nonce liveness (#342), AMD chain validity + KDS CRL
     # revocation (#343), measurement/policy pins (#345) and the EntrySign
-    # TCB floors. The testnet TEE host still sits at SPL 21 (< 25; the
-    # 2026-08-20 Scaleway intervention updated SEV fw to 1.55.39 but not
-    # the microcode), so the tests keep --min-tcb/--accept-outdated-tcb
-    # (see tests/test_vprograms.py TCB_FLOOR_ARGS). The digest-save
+    # TCB floors, enforced for real since the TEE host (Siena/Zen4c) came
+    # back at microcode SPL 28 on 2026-08-24, above the 25 Zen4c floor;
+    # the tests no longer pass --min-tcb/--accept-outdated-tcb. The digest-save
     # archive bug (aleph-rs#348) is NOT in rc11; the compose test keeps
     # its tagged --image-archive workaround.
     version: "0.17.0-rc11"

@@ -23,17 +23,6 @@ from tests.test_programs import _parse_json_stream
 # from the CCN on first launch; give the scheduler + CRN a wide margin.
 CREATE_WAIT_SECS = 900
 
-# TEMPORARY (remove once Scaleway updates the TEE server's BIOS, support
-# ticket open since 2026-08-17): the TEE server (Dell C6615, BIOS 1.3.3,
-# Siena/Zen4c) runs x86 microcode SPL 21, below the EntrySign mitigation
-# minimum of 25 (AMD-SB-3019; rc9's family-scoped floor), and Elastic Metal
-# users cannot flash the BIOS themselves. Accept the known-outdated host so
-# the flow validation stays green; the CLI still prints its "guest may be
-# exposed" warning on every call. With these flags the run validates the
-# whole V-PROGRAM flow but NOT the TCB gate; drop them to restore the real
-# floor.
-TCB_FLOOR_ARGS = ("--min-tcb", "microcode=21", "--accept-outdated-tcb")
-
 
 def _vprogram_message(objs: list[dict]) -> dict:
     """The V-PROGRAM submission receipt from a `vprogram create --json`
@@ -95,7 +84,7 @@ def test_vprogram_deploy_and_attested_call(
     curl_probe = None
     while True:
         health = aleph_cli(
-            "vprogram", "call", item_hash, "/health", *TCB_FLOOR_ARGS,
+            "vprogram", "call", item_hash, "/health",
             check=False, timeout=120,
         )
         if health.returncode == 0:
@@ -122,7 +111,7 @@ def test_vprogram_deploy_and_attested_call(
     assert json.loads(health.stdout)["status"] == "ok"
 
     fib = aleph_cli(
-        "vprogram", "call", item_hash, "/fib/10", *TCB_FLOOR_ARGS,
+        "vprogram", "call", item_hash, "/fib/10",
         check=False, timeout=120,
     )
     assert fib.returncode == 0, f"attested /fib/10 call failed: {(fib.stderr or '')[-1000:]}"
@@ -161,11 +150,9 @@ def test_vprogram_deploy_and_attested_call(
 
     # Fail-closed: a wrong expected measurement must abort the call without
     # ever printing a response body.
-    # TCB_FLOOR_ARGS here too, so this fails on the measurement pin rather
-    # than on the host's outdated microcode.
     bad = aleph_cli(
         "vprogram", "call", item_hash, "/health",
-        "--expected-measurement", "0" * 96, *TCB_FLOOR_ARGS,
+        "--expected-measurement", "0" * 96,
         check=False, timeout=120,
     )
     assert bad.returncode != 0, "call with a wrong measurement must fail"

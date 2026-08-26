@@ -388,6 +388,29 @@ def ssh_key_pair(tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
+def crn_ssh_key() -> str:
+    """SSH private key granting root access to the CRN *hosts* (not the VMs).
+
+    Reuses crn-up.sh's convention: the SSH_KEY_FILE environment variable,
+    defaulting to ~/.ssh/id_ed25519. In CI the tests run on the CCN droplet,
+    where the workflow copies the DigitalOcean key to /root/.ssh/id_ed25519
+    (the same key crn-up.sh uses to install the CRNs).
+
+    The upgrade test needs this to inspect and mutate the CRN itself: dpkg
+    version checks, controller unit PIDs, /etc/aleph-vm/supervisor.env edits
+    and aleph-vm-supervisor restarts.
+    """
+    path = os.path.expanduser(os.environ.get("SSH_KEY_FILE") or "~/.ssh/id_ed25519")
+    if not os.path.exists(path):
+        pytest.fail(
+            f"CRN host SSH key not found at {path}. The upgrade test must run "
+            "where crn-up.sh ran (the CI droplet or the operator machine); set "
+            "SSH_KEY_FILE to the key that has root access to the CRN hosts."
+        )
+    return path
+
+
+@pytest.fixture(scope="session")
 def indexer_graphql(indexer_url: str):
     """Return a function that queries the indexer's GraphQL endpoint."""
     def query(graphql_query: str, variables: dict | None = None) -> dict:

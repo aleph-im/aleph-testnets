@@ -732,8 +732,9 @@ status_crn() {
 # restart the supervisor (and, on split-package debs, the agent); persistent
 # VMs live in their own aleph-vm-controller@ systemd units and must survive.
 #
-# Iterates over all CRN state dirs (like --destroy) and skips static CRNs:
-# a shared static server is not ours to upgrade mid-run.
+# Iterates over all CRN state dirs (like --destroy) and skips static CRNs
+# unless UPGRADE_STATIC=1: a shared static server is not ours to upgrade
+# mid-run by default; the SEV upgrade check opts in explicitly.
 #
 # Strict by design: any CRN that does not come back (supervisor unit active
 # AND HTTP API answering on :4020) fails the whole command, because the test
@@ -760,8 +761,8 @@ upgrade_crn() {
         [ -d "$dir" ] || continue
         local idx
         idx=$(basename "$dir")
-        if crn_is_static "$idx"; then
-            echo "==> CRN $idx is static, skipping upgrade."
+        if crn_is_static "$idx" && [ "${UPGRADE_STATIC:-0}" != "1" ]; then
+            echo "==> CRN $idx is static, skipping upgrade (set UPGRADE_STATIC=1 to include it)."
             continue
         fi
         if [ ! -f "$dir/droplet-ip" ]; then

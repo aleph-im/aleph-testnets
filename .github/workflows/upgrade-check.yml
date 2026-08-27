@@ -3,15 +3,18 @@ name: aleph-vm upgrade check (1.15.0 -> dev)
 # Throwaway harness: install the 1.15.0 release deb on a fresh CRN, boot a
 # QEMU instance on it, then upgrade the CRN in place to the dev branch's CI
 # deb and assert the instance survived untouched (tests/test_vm_upgrade.py).
-# Runs on every push to this branch; no TEE host involved.
+# The static AMD SEV TEE server joins as a second, confidential CRN so the
+# same upgrade runs with an SEV instance live. Runs on every push to this
+# branch.
 on:
   push:
     branches: [od/upgrade-check-1.15-to-dev]
   workflow_dispatch:
 
+# Serialize on the shared TEE server with main's pr-tests (same group).
 concurrency:
-  group: upgrade-check
-  cancel-in-progress: true
+  group: amd-sev-snp-server
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -20,12 +23,12 @@ permissions:
 jobs:
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 150
     environment: digitalocean
     env:
-      # One droplet CRN is enough: both scenarios run on the same node.
+      # One droplet CRN plus the static TEE server at index 1 (= DO_CRN_COUNT).
       DO_CRN_COUNT: 1
-      CRN_COUNT: 1
+      CRN_COUNT: 2
       # Baseline release installed first, candidate branch upgraded to mid-test.
       BASELINE_VERSION: "1.15.0"
       CANDIDATE_BRANCH: "dev"
@@ -140,6 +143,8 @@ jobs:
               sleep 3
             done
           done
+          # Static TEE server: already running, just trust its key.
+          ssh-keyscan -H "${{ secrets.AMD_SEV_SNP_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Install system dependencies (CCN + CRN in parallel)
         run: |
@@ -226,7 +231,7 @@ jobs:
         run: |
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --deploy-contracts"
 
-      - name: Install and register the CRN (baseline release)
+      - name: Install and register the CRNs (baseline release)
         run: |
           # Write per-CRN state so crn-up.sh can find the droplet.
           for idx in $(seq 0 $((DO_CRN_COUNT - 1))); do
@@ -245,8 +250,18 @@ jobs:
             fi
           done
 
+          # Static TEE server as CRN index ${DO_CRN_COUNT} (see docs/tee-server.md):
+          # static = don't provision/destroy (upgraded only with UPGRADE_STATIC=1);
+          # confidential = enable AMD SEV in supervisor.env; ssh-user = non-root.
+          TEE_IDX=${DO_CRN_COUNT}
+          ssh root@${DROPLET_IPV4} "mkdir -p /opt/aleph-testnets/.local/crn/${TEE_IDX}"
+          ssh root@${DROPLET_IPV4} "echo 'amd-sev-snp-server' > /opt/aleph-testnets/.local/crn/${TEE_IDX}/droplet-name"
+          ssh root@${DROPLET_IPV4} "echo '${{ secrets.AMD_SEV_SNP_HOST }}' > /opt/aleph-testnets/.local/crn/${TEE_IDX}/droplet-ip"
+          ssh root@${DROPLET_IPV4} "echo '${{ secrets.AMD_SEV_SNP_USER }}' > /opt/aleph-testnets/.local/crn/${TEE_IDX}/ssh-user"
+          ssh root@${DROPLET_IPV4} "touch /opt/aleph-testnets/.local/crn/${TEE_IDX}/static /opt/aleph-testnets/.local/crn/${TEE_IDX}/confidential"
+
           # Copy SSH key to the CCN droplet so it (and the tests running
-          # there) can reach the CRN host as root.
+          # there) can reach the CRN hosts.
           scp ~/.ssh/id_ed25519 root@${DROPLET_IPV4}:/root/.ssh/id_ed25519
           ssh root@${DROPLET_IPV4} "chmod 600 /root/.ssh/id_ed25519"
 
@@ -257,6 +272,7 @@ jobs:
             CCN_URL=http://${DROPLET_IPV4}:4024 \
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             CRN_COUNT=${CRN_COUNT} \
+            STATIC_CRN_IPV6_POOL=2001:bc8:702:32d::/64 \
             ALEPH_VM_VERSION='${BASELINE_VERSION}' \
             bash scripts/crn-up.sh --install"
 
@@ -265,6 +281,17 @@ jobs:
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             CRN_COUNT=${CRN_COUNT} \
             bash scripts/crn-up.sh --register"
+
+      - name: Prepare confidential VM artifacts
+        run: |
+          # SEVCTL_HOST = CRN 0 (ubuntu-24.04, same distro as the CCN droplet
+          # where sevctl runs client-side).
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
+            TEE_HOST='${{ secrets.AMD_SEV_SNP_HOST }}' \
+            TEE_USER='${{ secrets.AMD_SEV_SNP_USER }}' \
+            SEVCTL_HOST='${CRN_0_IPV4}' \
+            SSH_KEY_FILE=/root/.ssh/id_ed25519 \
+            bash scripts/confidential-artifacts.sh"
 
       - name: Run upgrade checks
         run: |
@@ -275,6 +302,7 @@ jobs:
             GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             ALEPH_VM_UPGRADE_BRANCH='${CANDIDATE_BRANCH}' \
             UPGRADE_CHECK_RUST=1 \
+            UPGRADE_STATIC=1 \
             bash scripts/local-up.sh --test tests/test_vm_upgrade.py"
 
       - name: Collect test results
@@ -304,6 +332,18 @@ jobs:
             fi
           done
 
+      - name: Collect TEE server logs
+        if: always()
+        run: |
+          TEE_HOST="${{ secrets.AMD_SEV_SNP_HOST }}"
+          TEE_USER="${{ secrets.AMD_SEV_SNP_USER }}"
+          tee() { ssh "$TEE_USER@$TEE_HOST" "sudo -n bash -c $(printf '%q' "$1")"; }
+          tee "journalctl -u aleph-vm-supervisor.service --no-pager -n 5000" > tee-supervisor.txt 2>&1 || true
+          tee "journalctl -u aleph-vm-agent.service --no-pager -n 3000" > tee-agent.txt 2>&1 || true
+          tee "journalctl -u 'aleph-vm-controller@*' --no-pager -n 3000" > tee-controllers.txt 2>&1 || true
+          tee "cat /var/log/apt/term.log" > tee-apt.txt 2>&1 || true
+          tee "cat /etc/aleph-vm/supervisor.env; ls -la /var/lib/aleph/vm /var/lib/aleph/vm/volumes/persistent/* /var/lib/aleph/vm/sessions/*; cat /var/lib/aleph/vm/*-controller.json" > tee-state.txt 2>&1 || true
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -318,6 +358,14 @@ jobs:
             crn*-apt.txt
             crn*-vm-connector.txt
             crn*-state.txt
+            tee-*.txt
+
+      - name: Reset TEE server
+        if: always()
+        run: |
+          # Stop the supervisor, kill leftover QEMU, wipe execution state so
+          # this run's VMs can't leak into the next. Idempotent.
+          bash scripts/tee-reset.sh "${{ secrets.AMD_SEV_SNP_HOST }}" "${{ secrets.AMD_SEV_SNP_USER }}" ~/.ssh/id_ed25519 || true
 
       - name: Destroy CRN Droplets
         if: always()

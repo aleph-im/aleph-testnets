@@ -26,6 +26,12 @@ remote() {
 
 echo "==> Resetting aleph-vm state on $HOST ..."
 remote "systemctl stop aleph-vm-supervisor.service 2>/dev/null || true"
+# Per-VM controller units outlive the state wipe below: systemd keeps
+# restarting a launcher whose controller.json is gone (observed at a restart
+# counter of 844k, flooding the journal and drowning the CI log capture).
+# Stop and clear every controller unit so none leaks into the next run.
+remote "systemctl stop 'aleph-vm-controller@*' 2>/dev/null || true"
+remote "systemctl reset-failed 'aleph-vm-controller@*' 2>/dev/null || true"
 # The [6] bracket keeps the pattern from matching the remote shell's own
 # cmdline (which contains the pattern string) — without it, pkill -f kills
 # its parent shell and the ssh command exits 137 instead of 0.

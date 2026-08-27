@@ -39,7 +39,8 @@ def test_vprogram_deploy_and_attested_call(
     workload = os.path.join(vprogram_dir, "fib-workload.ext4")
 
     result = aleph_cli(
-        "--json", "vprogram", "create",
+        # aleph-cli 0.17.0 (aleph-rs#361): the name is a mandatory positional.
+        "--json", "vprogram", "create", "testnet-fib",
         "--workload", workload,
         "--runtime", vprogram_runtime_hash,
         "--chain", "eth",

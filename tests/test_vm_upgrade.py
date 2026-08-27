@@ -48,7 +48,13 @@ from tests.vm_helpers import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # aleph-vm branch whose CI deb scenario A upgrades to (the upgrade candidate).
-UPGRADE_BRANCH = os.environ.get("ALEPH_VM_UPGRADE_BRANCH", "dev")
+# Set only by .github/workflows/upgrade-check.yml: the module is opt-in, so the
+# regular pr-tests run (no GH_TOKEN, no candidate) does not fail on it.
+UPGRADE_BRANCH = os.environ.get("ALEPH_VM_UPGRADE_BRANCH", "")
+
+pytestmark = pytest.mark.skipif(
+    not UPGRADE_BRANCH, reason="upgrade checks are opt-in: set ALEPH_VM_UPGRADE_BRANCH"
+)
 
 RUST_SWAP_ENABLED = os.environ.get("UPGRADE_CHECK_RUST", "1") == "1"
 

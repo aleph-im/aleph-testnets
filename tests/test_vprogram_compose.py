@@ -61,7 +61,8 @@ def test_vprogram_compose_deploy_and_attested_call(
     )
 
     result = aleph_cli(
-        "--json", "vprogram", "create",
+        # aleph-cli 0.17.0 (aleph-rs#361): the name is a mandatory positional.
+        "--json", "vprogram", "create", "testnet-whoami",
         "--compose", str(compose_file),
         "--image-archive", f"{WHOAMI_IMAGE}={archive}",
         "--runtime", vprogram_compose_runtime_hash,

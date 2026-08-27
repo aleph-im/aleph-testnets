@@ -31,7 +31,7 @@ jobs:
       CRN_COUNT: 2
       # Baseline release installed first, candidate branch upgraded to mid-test.
       BASELINE_VERSION: "1.15.0"
-      CANDIDATE_BRANCH: "dev"
+      CANDIDATE_BRANCH: "main"
 
     steps:
       - name: Checkout

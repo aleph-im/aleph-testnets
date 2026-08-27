@@ -46,16 +46,13 @@ components:
     tag: "0.2.0"
 
   aleph-vm:
-    # od/drop-attest-cli = aleph-vm PR #1168 (2.0 review follow-ups on top
-    # of main, which now carries everything dev had): attest-cli dropped
-    # in favour of the aleph-rs verifier, attest-agent hardening and the
-    # fail-closed guest init. #1169 (od/minimal-guest-kernel) is stacked
-    # on it but targets this branch rather than main, so the deb workflow
-    # never runs for it; its only change is the nix guest kernel, which is
-    # not part of the deb (the guest images come from the pinned fixtures
-    # in scripts/vprogram-artifacts.sh), so the #1168 deb is the same host
-    # build. Downloads the .deb from GitHub Actions CI artifacts.
-    branch: "od/drop-attest-cli"
+    # main, which since 2026-08-27 carries everything dev had plus the 2.0
+    # review follow-ups (#1168: attest-cli dropped in favour of the aleph-rs
+    # verifier, attest-agent hardening, fail-closed guest init). #1169
+    # (od/minimal-guest-kernel) is nix-only: not part of the deb, the guest
+    # images come from the pinned fixtures in scripts/vprogram-artifacts.sh.
+    # Downloads the .deb from GitHub Actions CI artifacts.
+    branch: "main"
     # To deploy from a release instead, replace `branch` with:
     #   version: "1.15.0"
 

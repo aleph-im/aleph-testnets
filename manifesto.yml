@@ -6,29 +6,23 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    # 0.10.3-rc9 (2026-08-20): V-PROGRAM store dependencies checked at
-    # processing time (pyaleph#1234) and measurement registers adopted from
-    # aleph-message (pyaleph#1245). The registers schema must move in
-    # lockstep with aleph-cli rc11 and the aleph-vm branch below.
-    tag: "0.10.3-rc9"
+    # 0.11.0 (2026-08-27): first stable release with the V-PROGRAM message
+    # type, aleph-message 1.3.0 register-map measurements and V-PROGRAM
+    # artifact pricing. Ships with Kubo v0.43.0 (see infrastructure.ipfs).
+    tag: "0.11.0"
 
   p2p-service:
     image: alephim/p2p-service
     tag: "0.1.5"
 
   aleph-cli:
-    # 0.17.0-rc11: measurement registers instead of a scalar digest on
-    # V-PROGRAM messages (aleph-rs#349); must match pyaleph rc9 and the
-    # aleph-vm branch below. Carries rc10's `vprogram create --compose`
-    # (#344), fresh-nonce liveness (#342), AMD chain validity + KDS CRL
-    # revocation (#343), measurement/policy pins (#345) and the EntrySign
-    # TCB floors, enforced for real since the TEE host (Siena/Zen4c) came
-    # back at microcode SPL 28 on 2026-08-24, above the 25 Zen4c floor;
-    # the tests no longer pass --min-tcb/--accept-outdated-tcb. The digest-save
-    # archive bug (aleph-rs#348) is NOT in rc11; the compose test keeps
-    # its tagged --image-archive workaround.
-    version: "0.17.0-rc11"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0-rc11/aleph-cli-linux-x86_64"
+    # 0.17.0 (2026-08-27): first stable release of the `aleph vprogram`
+    # tree (create/--compose, show, list, call, delete) and the RA-TLS
+    # verifier with the EntrySign TCB floors, KDS CRL revocation and the
+    # fresh-nonce liveness challenge; register-map measurements matching
+    # pyaleph 0.11.0.
+    version: "0.17.0"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.17.0/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer
@@ -40,33 +34,30 @@ components:
 
   scheduler-rs:
     image: alephim/scheduler-rs
-    # vprogram-rc3 (2026-08-24): refreshed od/vprogram-scheduling build on
-    # top of rc2 (0.1.2 + scheduler#193 V-PROGRAM scheduling: ingestion,
-    # VmType::VProgram, SEV-SNP capability matching, the v_programs
-    # allocation bucket).
-    tag: "vprogram-rc3"
+    # 0.2.0 (2026-08-26): first release carrying V-PROGRAM scheduling
+    # (aleph-vm-scheduler#193: ingestion, VmType::VProgram, SEV-SNP
+    # capability matching, the v_programs allocation bucket) on top of the
+    # 0.1.2 v2-executions node_watcher.
+    tag: "0.2.0"
 
   scheduler-api:
     image: alephim/scheduler-api
-    # Same vprogram-rc3 od/vprogram-scheduling build as scheduler-rs above
-    # (vm_type=v_program filter on /api/v1/vms).
-    tag: "vprogram-rc3"
+    # Same 0.2.0 release as scheduler-rs above (vm_type=v_program filter).
+    tag: "0.2.0"
 
   aleph-vm:
-    # Plain dev: everything the validated aggregation branch carried is
-    # now merged (V-PROGRAM stack incl. aleph.compose/1 runtime and the
-    # SNP-instances stack via #1131, measurement registers #1143/#1146
-    # with the packaging pin #1147, and the validation agent fixes via
-    # #1148), plus the 2026-08-24 batch: measured-CPU SNP launch (#1145),
-    # agent-owned VM disks (#1149) and the SNP vCPU probe retry (#1150),
-    # plus the 2026-08-25 batch: agent-side backups with supervisor guest
-    # quiescence (#1151), disk admission before resource download (#1153),
-    # dead proto reservations dropped (#1154) and FAILED reporting for a
-    # controller unit that died (#1152).
-    branch: "dev"
-    # To deploy from a Git branch instead of a release, replace `version` with:
-    #   branch: "my-feature-branch"
-    # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).
+    # od/drop-attest-cli = aleph-vm PR #1168 (2.0 review follow-ups on top
+    # of main, which now carries everything dev had): attest-cli dropped
+    # in favour of the aleph-rs verifier, attest-agent hardening and the
+    # fail-closed guest init. #1169 (od/minimal-guest-kernel) is stacked
+    # on it but targets this branch rather than main, so the deb workflow
+    # never runs for it; its only change is the nix guest kernel, which is
+    # not part of the deb (the guest images come from the pinned fixtures
+    # in scripts/vprogram-artifacts.sh), so the #1168 deb is the same host
+    # build. Downloads the .deb from GitHub Actions CI artifacts.
+    branch: "od/drop-attest-cli"
+    # To deploy from a release instead, replace `branch` with:
+    #   version: "1.15.0"
 
 infrastructure:
   vm-connector:
@@ -84,7 +75,8 @@ infrastructure:
     tag: "8.4.0"
   ipfs:
     image: ipfs/kubo
-    tag: "v0.37.0"
+    # pyaleph 0.11.0 ships Kubo v0.43.0 (CVE-2026-46679, CVE-2026-57497).
+    tag: "v0.43.0"
   anvil:
     image: ghcr.io/foundry-rs/foundry
     tag: "stable"

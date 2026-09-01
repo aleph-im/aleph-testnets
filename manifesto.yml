@@ -6,15 +6,22 @@
 components:
   pyaleph:
     image: alephim/pyaleph-node
-    tag: "0.10.2-rc5"
+    # 0.11.2 (2026-08-31): 0.11.0 plus the strict V-PROGRAM scalar
+    # ingestion (aleph-message 1.3.1, pyaleph#1261, serde parity with the
+    # Rust SDK), Kubo >= v0.38 Provider config fixes and Ethereum sync
+    # fixes. Still ships Kubo v0.43.0 (see infrastructure.ipfs).
+    tag: "0.11.2"
 
   p2p-service:
     image: alephim/p2p-service
     tag: "0.1.5"
 
   aleph-cli:
-    version: "0.11.1"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.11.1/aleph-cli-linux-x86_64"
+    # 0.18.0 (2026-09-01): 0.17.0 plus V-PROGRAM verified data volumes
+    # and the register-carrying verification results (aleph-rs#383/#385);
+    # strict-scalar schema matching aleph-message 1.3.1 / pyaleph 0.11.2.
+    version: "0.18.0"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.18.0/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer
@@ -26,20 +33,26 @@ components:
 
   scheduler-rs:
     image: alephim/scheduler-rs
-    tag: "0.1.2"
+    # 0.2.1 (2026-09-01): 0.2.0 plus lossy history fetches (one unreadable
+    # message no longer blinds reconciliation, scheduler#205) and the
+    # aleph-sdk/aleph-types 0.18.0 bump from crates.io.
+    tag: "0.2.1"
 
   scheduler-api:
     image: alephim/scheduler-api
-    tag: "0.1.2"
+    # Same 0.2.1 release as scheduler-rs above (vm_type=v_program filter).
+    tag: "0.2.1"
 
   aleph-vm:
-    # 1.13.0 is the first release with EIP-191 allocation auth (aleph-vm#945)
-    # and signer resolution from the network settings aggregate (aleph-vm#968,
-    # published by publish-settings-aggregate.sh).
-    version: "1.13.0"
-    # To deploy from a Git branch instead of a release, replace `version` with:
-    #   branch: "my-feature-branch"
-    # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).
+    # 2.0.1 release candidate: aleph-vm PR #1183 (od/bump-aleph-message-131),
+    # i.e. main as of 2026-09-01 (2.0.1 SNP field-report fixes #1178/#1179/
+    # #1180, hugepage accounting #1182) plus the released aleph-message
+    # 1.3.1 pin. Guest images still come from the pinned fixtures in
+    # scripts/vprogram-artifacts.sh.
+    # Downloads the .deb from GitHub Actions CI artifacts.
+    branch: "od/bump-aleph-message-131"
+    # To deploy from a release instead, replace `branch` with:
+    #   version: "1.15.0"
 
 infrastructure:
   vm-connector:
@@ -57,7 +70,8 @@ infrastructure:
     tag: "8.4.0"
   ipfs:
     image: ipfs/kubo
-    tag: "v0.37.0"
+    # pyaleph 0.11.0 ships Kubo v0.43.0 (CVE-2026-46679, CVE-2026-57497).
+    tag: "v0.43.0"
   anvil:
     image: ghcr.io/foundry-rs/foundry
     tag: "stable"

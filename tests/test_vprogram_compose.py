@@ -14,9 +14,11 @@ The workload is traefik/whoami serving on :8080: a stock Docker Hub image,
 so this also exercises the registry pull + digest-pin + in-guest
 `podman load` matching path end to end.
 
-Fixture provenance: scripts/vprogram-artifacts.sh (the 2026.08.20 compose
-runtime from aleph-vm ba690c65).
+Fixture provenance: scripts/vprogram-artifacts.sh (the 2026.08.31 "1.1"
+compose runtime from aleph-vm c5391963, the first with verified-volume
+support: guest init verity-mounts each --volume image at /volumes/<i>).
 """
+import json
 import subprocess
 import time
 
@@ -130,3 +132,141 @@ def test_vprogram_compose_deploy_and_attested_call(
     # whoami's / dumps request/host info; Hostname proves the container
     # itself answered through the attested proxy, not some error page.
     assert "Hostname:" in root.stdout
+
+
+# -- Verified data volumes (aleph-vm#1176 + aleph-rs#383) ---------------------
+#
+# nginx serving content that only exists inside a dm-verity verified volume.
+# The CLI verity-formats the ext4 image, publishes data + hash tree and pins
+# the roothash on the message; the guest init verity-opens and mounts it at
+# /volumes/0; podman binds subpaths of that mount into the container. Both
+# binds come from the volume (the compose subset rejects any other source),
+# so the served config AND the served content are measured data: the marker
+# coming back through the attested channel proves the whole chain.
+NGINX_IMAGE = "nginx:1.27-alpine"
+VOLUME_MARKER = '{"volume": "verified", "fruit": "quetsche"}'
+# nginx's default conf.d/default.conf listens on :80; binding the volume's
+# conf.d over /etc/nginx/conf.d replaces it with a server on the runtime's
+# fixed 127.0.0.1:8080 upstream, serving the volume's html/ subtree.
+NGINX_SITE_CONF = """\
+server {
+    listen 127.0.0.1:8080;
+    location / {
+        root /data;
+        default_type application/json;
+    }
+}
+"""
+VOLUME_COMPOSE_YML = f"""\
+services:
+  web:
+    image: {NGINX_IMAGE}
+    network_mode: host
+    volumes:
+      - /volumes/0/conf.d:/etc/nginx/conf.d:ro
+      - /volumes/0/html:/data:ro
+"""
+
+
+def _build_volume_image(tmp_path) -> str:
+    """A small ext4 image holding the nginx config + content, built with
+    mkfs.ext4 -d (no mount, no root needed)."""
+    tree = tmp_path / "volume-tree"
+    (tree / "conf.d").mkdir(parents=True)
+    (tree / "html").mkdir()
+    (tree / "conf.d" / "site.conf").write_text(NGINX_SITE_CONF)
+    (tree / "html" / "marker.json").write_text(VOLUME_MARKER)
+    image = tmp_path / "volume.ext4"
+    subprocess.run(
+        ["dd", "if=/dev/zero", f"of={image}", "bs=1M", "count=8"],
+        check=True, capture_output=True, timeout=60,
+    )
+    subprocess.run(
+        ["mkfs.ext4", "-q", "-d", str(tree), str(image)],
+        check=True, capture_output=True, timeout=60,
+    )
+    return str(image)
+
+
+def test_vprogram_compose_verified_volume(
+    aleph_cli, vprogram_compose_runtime_hash, confidential_crn_host, tmp_path
+):
+    compose_file = tmp_path / "docker-compose.yml"
+    compose_file.write_text(VOLUME_COMPOSE_YML)
+    volume_image = _build_volume_image(tmp_path)
+
+    # Tagged-save workaround, same reason as the whoami test above.
+    archive = tmp_path / "nginx.tar"
+    subprocess.run(["docker", "pull", NGINX_IMAGE], check=True, capture_output=True, timeout=300)
+    subprocess.run(
+        ["docker", "save", "-o", str(archive), NGINX_IMAGE], check=True, capture_output=True, timeout=300
+    )
+
+    result = aleph_cli(
+        "--json", "vprogram", "create", "testnet-volume",
+        "--compose", str(compose_file),
+        "--image-archive", f"{NGINX_IMAGE}={archive}",
+        "--volume", volume_image,
+        "--runtime", vprogram_compose_runtime_hash,
+        "--chain", "eth",
+        "--wait", str(CREATE_WAIT_SECS),
+        check=False,
+        timeout=CREATE_WAIT_SECS + 300,
+    )
+    assert result.returncode == 0, (
+        f"vprogram create --compose --volume failed: {(result.stderr or '')[-1000:]}"
+    )
+
+    objs = _parse_json_stream(result.stdout)
+    message = _vprogram_message(objs)
+    item_hash = message["item_hash"]
+
+    ready = objs[-1]
+    assert ready.get("ready") is True, (
+        f"volume V-PROGRAM {item_hash} not reachable within {CREATE_WAIT_SECS}s: {ready}"
+    )
+    endpoint = ready.get("attested_endpoint")
+    assert endpoint, "volume V-PROGRAM is running but no attested endpoint was resolved"
+    assert confidential_crn_host in endpoint, (
+        f"attested endpoint {endpoint} is not on the TEE server {confidential_crn_host}"
+    )
+
+    # The message must declare the volume (data ref + hash tree land in
+    # storage.volumes with sizes via show).
+    shown = aleph_cli("vprogram", "show", item_hash, parse_json=True)
+    assert shown["measurements"], "no measurements pinned on the message"
+    assert shown["running"] is True, f"CRN does not report the VM as active: {shown}"
+    assert shown["storage"]["volumes"], "no verified volume declared on the message"
+
+    # Same startup poll as the whoami test: transport errors and 502
+    # (compose stack still starting) are the not-ready-yet signals.
+    deadline = time.time() + 240
+    curl_probe = None
+    while True:
+        marker = aleph_cli(
+            "vprogram", "call", item_hash, "/marker.json",
+            check=False, timeout=120,
+        )
+        body = marker.stdout or ""
+        if marker.returncode == 0 and "quetsche" in body:
+            break
+        transient_transport = marker.returncode != 0 and "error sending request" in (marker.stderr or "")
+        stack_starting = marker.returncode == 0 and "upstream unreachable" in body
+        if transient_transport and curl_probe is None:
+            probe_url = endpoint.rstrip("/") + "/marker.json"
+            p = subprocess.run(
+                ["curl", "-ks", "-o", "/dev/null", "-w", "%{http_code}", probe_url],
+                capture_output=True, text=True, timeout=15,
+            )
+            curl_probe = p.stdout.strip() or "no-response"
+        if not (transient_transport or stack_starting) or time.time() >= deadline:
+            raise AssertionError(
+                f"attested /marker.json call did not return the volume marker within "
+                f"the startup budget (unverified curl probe: HTTP {curl_probe}): "
+                f"stdout={body[:500]!r} stderr={(marker.stderr or '')[-500:]!r}"
+            )
+        time.sleep(5)
+
+    # The marker file exists ONLY inside the verity volume: serving it through
+    # the attested endpoint proves verity-open, guest mount and podman binds.
+    assert json.loads(marker.stdout) == json.loads(VOLUME_MARKER)

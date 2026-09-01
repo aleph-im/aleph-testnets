@@ -10,7 +10,7 @@ computes those measurements itself at create time from the runtime bundle,
 so this also locks the CLI measurement path against what the CRN launches.
 
 Fixture provenance: scripts/vprogram-artifacts.sh (nix-reproducible builds
-of aleph-vm, currently the 2026.08.20 runtime from ba690c65).
+of aleph-vm, currently the 2026.08.31 "1.1" runtime from c5391963).
 """
 import json
 import os

@@ -164,10 +164,16 @@ if ! tee_ssh "test -f '$cached_img'"; then
     tee_ssh "curl -fsSL -o '$workdir/base.qcow2' '$BASE_IMAGE_URL'"
 
     echo "    Extracting rootfs (guestmount)..."
+    # umount, not guestunmount: guestunmount always goes through fusermount3,
+    # which Ubuntu (26.04 at least) confines with an AppArmor profile that
+    # only allows unmounting under $HOME, /mnt, /media, /tmp and /run/user.
+    # Our work dir lives under /opt, so the unmount is denied even for root
+    # and guestunmount gives up after a minute of retries. These commands run
+    # as root, and a plain umount is not confined.
     tee_ssh "mkdir -p '$workdir/mnt' '$workdir/rootfs' && \
              guestmount --format=qcow2 -a '$workdir/base.qcow2' -o allow_other -i '$workdir/mnt' && \
              cp --archive '$workdir'/mnt/* '$workdir/rootfs/' && \
-             guestunmount '$workdir/mnt'"
+             umount '$workdir/mnt'"
 
     echo "    Building encrypted image..."
     tee_ssh "cd '$workdir' && bash build_debian_image.sh \

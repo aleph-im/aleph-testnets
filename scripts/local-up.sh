@@ -261,6 +261,12 @@ run_tests() {
         fi
     done
     export ALEPH_TESTNET_CONFIDENTIAL_PASSWORD="${ALEPH_TESTNET_CONFIDENTIAL_PASSWORD:-test-password}"
+    # V-PROGRAM test fixtures (present only when CI prepared them via
+    # scripts/vprogram-artifacts.sh; tests/test_vprograms.py skips when
+    # these are unset).
+    if [ -d "$LOCAL_DIR/vprogram" ]; then
+        export ALEPH_TESTNET_VPROGRAM_DIR="$LOCAL_DIR/vprogram"
+    fi
     cd "$REPO_ROOT"
     pytest -v --junitxml=results.xml "$@"
 }

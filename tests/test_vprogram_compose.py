@@ -23,7 +23,7 @@ import subprocess
 import time
 
 from tests.test_programs import _parse_json_stream
-from tests.test_vprograms import CREATE_WAIT_SECS, _vprogram_message
+from tests.test_vprograms import CREATE_WAIT_SECS, TCB_FLOOR_ARGS, _vprogram_message
 
 # One service, host networking (required by the aleph.compose/1 subset),
 # serving plain HTTP on the runtime's fixed 127.0.0.1:8080 upstream.
@@ -104,7 +104,7 @@ def test_vprogram_compose_deploy_and_attested_call(
     curl_probe = None
     while True:
         root = aleph_cli(
-            "vprogram", "call", item_hash, "/",
+            "vprogram", "call", item_hash, "/", *TCB_FLOOR_ARGS,
             check=False, timeout=120,
         )
         body = root.stdout or ""
@@ -244,7 +244,7 @@ def test_vprogram_compose_verified_volume(
     curl_probe = None
     while True:
         marker = aleph_cli(
-            "vprogram", "call", item_hash, "/marker.json",
+            "vprogram", "call", item_hash, "/marker.json", *TCB_FLOOR_ARGS,
             check=False, timeout=120,
         )
         body = marker.stdout or ""

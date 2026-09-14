@@ -348,7 +348,12 @@ install_crn() {
         # No local AUTHORIZED_ALLOCATION_SIGNERS override: the supervisor sources
         # the Aleph-EIP191-V1 signers from the settings aggregate published at
         # SETTINGS_AGGREGATE_ADDRESS (aleph-vm#968).
+        # Pin the guests' resolvers instead of auto-detecting the host's. The
+        # provider hands the host whatever it likes: DigitalOcean moved from
+        # public anycast to a VPC-internal address, which no guest can reach
+        # from its tap network, and every in-guest lookup failed.
         cat > "$env_file" <<EOF
+ALEPH_VM_DNS_NAMESERVERS=["1.1.1.1","8.8.8.8"]
 ALEPH_VM_SUPERVISOR_HOST=0.0.0.0
 ALEPH_VM_DOMAIN_NAME=$ip
 ALEPH_VM_API_SERVER=$CCN_URL

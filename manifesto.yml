@@ -33,15 +33,15 @@ components:
 
   scheduler-rs:
     image: alephim/scheduler-rs
-    # 0.2.1 (2026-09-01): 0.2.0 plus lossy history fetches (one unreadable
-    # message no longer blinds reconciliation, scheduler#205) and the
-    # aleph-sdk/aleph-types 0.18.0 bump from crates.io.
-    tag: "0.2.1"
+    # 0.2.2 (2026-09-14): pushes plans to /v2/control/allocations on CRNs
+    # that advertise it (scheduler#208), re-pushes while a planned VM stays
+    # missing (#209), places GPU V-PROGRAMs on confidential cards (#210).
+    tag: "0.2.2"
 
   scheduler-api:
     image: alephim/scheduler-api
-    # Same 0.2.1 release as scheduler-rs above (vm_type=v_program filter).
-    tag: "0.2.1"
+    # Same 0.2.2 release as scheduler-rs above.
+    tag: "0.2.2"
 
   aleph-vm:
     # 2.1 development branch, i.e. 2.0.1 plus the 2.1 storage work (bounded

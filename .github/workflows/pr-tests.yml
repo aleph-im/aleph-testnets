@@ -329,7 +329,11 @@ jobs:
             ip_var="CRN_${idx}_IPV4"
             ip="${!ip_var}"
             if [ -n "${ip:-}" ]; then
-              ssh root@${ip} "journalctl -u aleph-vm-supervisor.service --no-pager -n 500" > "crn${idx}-supervisor.txt" 2>&1 || true
+              # Whole journal, not a -n budget: the droplet is fresh, and the
+              # agent is where allocations, verdicts and the control API log.
+              ssh root@${ip} "journalctl -u aleph-vm-supervisor.service --no-pager" > "crn${idx}-supervisor.txt" 2>&1 || true
+              ssh root@${ip} "journalctl -u aleph-vm-agent.service --no-pager" > "crn${idx}-agent.txt" 2>&1 || true
+              ssh root@${ip} "journalctl -u 'aleph-vm-controller@*' --no-pager" > "crn${idx}-controllers.txt" 2>&1 || true
               ssh root@${ip} "docker logs vm-connector" > "crn${idx}-vm-connector.txt" 2>&1 || true
             fi
           done
@@ -450,6 +454,8 @@ jobs:
             results.xml
             docker-logs.txt
             crn*-supervisor.txt
+            crn*-agent.txt
+            crn*-controllers.txt
             crn*-vm-connector.txt
             tee-supervisor.txt
             tee-agent.txt

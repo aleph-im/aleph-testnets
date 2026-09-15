@@ -44,13 +44,14 @@ components:
     tag: "0.2.2"
 
   aleph-vm:
-    # 2.1 development branch, i.e. 2.0.1 plus the 2.1 storage work (bounded
-    # download caches #1161, storage status/reclaim/reconcile CLI #1162),
-    # the scheduler-allocation reconciler #1173 and the NVIDIA CC probes
-    # (#1196/#1197). Guest images still come from the pinned fixtures in
-    # scripts/vprogram-artifacts.sh.
+    # main after the dev-2.1 merge (2026-09-15), the 2.1.0 release candidate:
+    # 2.0.1 plus the storage work (bounded download caches #1161, storage
+    # status/reclaim/reconcile CLI #1162), the scheduler-allocation
+    # reconciler #1173, the NVIDIA CC probes (#1196/#1197) and the
+    # post-audit fixes (#1253, #1254, #1255). Guest images still come from
+    # the pinned fixtures in scripts/vprogram-artifacts.sh.
     # Downloads the .deb from GitHub Actions CI artifacts.
-    branch: "dev-2.1"
+    branch: "main"
     # To deploy from a release instead, replace `branch` with:
     #   version: "1.15.0"
 

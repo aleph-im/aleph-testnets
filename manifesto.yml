@@ -17,11 +17,14 @@ components:
     tag: "0.1.5"
 
   aleph-cli:
-    # 0.18.0 (2026-09-01): 0.17.0 plus V-PROGRAM verified data volumes
-    # and the register-carrying verification results (aleph-rs#383/#385);
-    # strict-scalar schema matching aleph-message 1.3.1 / pyaleph 0.11.2.
-    version: "0.18.0"
-    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.18.0/aleph-cli-linux-x86_64"
+    # 0.19.0 (2026-09-16): 0.18.x plus the SEV-SNP confidential instance
+    # client (create, attest, unlock; aleph-rs#394), the confidential GPU
+    # requirement on V-PROGRAM content (#397), the owner's
+    # /machine/{ref}/start route (#398, the 2.1 "stopped stays stopped"
+    # counterpart), `aleph vprogram run` local boot test (#393), and the
+    # credit transfer expiration serialization fix (#399).
+    version: "0.19.0"
+    url: "https://github.com/aleph-im/aleph-rs/releases/download/v0.19.0/aleph-cli-linux-x86_64"
 
   indexer:
     image: alephim/credit-indexer
@@ -44,16 +47,19 @@ components:
     tag: "0.2.2"
 
   aleph-vm:
-    # main after the dev-2.1 merge (2026-09-15), the 2.1.0 release candidate:
-    # 2.0.1 plus the storage work (bounded download caches #1161, storage
-    # status/reclaim/reconcile CLI #1162), the scheduler-allocation
-    # reconciler #1173, the NVIDIA CC probes (#1196/#1197) and the
-    # post-audit fixes (#1253, #1254, #1255). Guest images still come from
-    # the pinned fixtures in scripts/vprogram-artifacts.sh.
-    # Downloads the .deb from GitHub Actions CI artifacts.
-    branch: "main"
-    # To deploy from a release instead, replace `branch` with:
-    #   version: "1.15.0"
+    # 2.1.0 (2026-09-15, tag = main 3579c430, the build the last green run
+    # of the 2.1 chain used): 2.0.1 plus the storage work (bounded download
+    # caches #1161, storage status/reclaim/reconcile CLI #1162, disks
+    # reclaimed on delete), v2 scheduler allocations with a background
+    # reconciler (#1173, #1242), the Python supervisor removed (#1170,
+    # ALEPH_VM_SUPERVISOR_IMPL is ignored), experimental NVIDIA CC for
+    # V-PROGRAMs, and the post-audit fixes (#1253, #1254, #1255). Guest
+    # images still come from the pinned fixtures in
+    # scripts/vprogram-artifacts.sh.
+    version: "2.1.0"
+    # To deploy from a Git branch instead of a release, replace `version` with:
+    #   branch: "my-feature-branch"
+    # This downloads the .deb from GitHub Actions CI artifacts (requires gh CLI).
 
 infrastructure:
   vm-connector:

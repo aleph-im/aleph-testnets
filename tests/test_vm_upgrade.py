@@ -472,7 +472,9 @@ def _create_confidential_instance(aleph_cli, conf: Confidential, public_key_path
     result = aleph_cli(
         "instance", "create", name,
         "--image", conf.rootfs_hash,
-        "--confidential",
+        # Legacy session-based SEV flow; aleph-cli >= 0.19.0 defaults
+        # --confidential to SEV-SNP (see tests/test_confidential.py).
+        "--confidential", "--tee", "sev",
         "--confidential-firmware", conf.firmware_hash,
         "--vcpus", "1",
         "--memory", "4GiB",

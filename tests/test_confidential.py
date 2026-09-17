@@ -113,7 +113,11 @@ def test_confidential_instance_create_and_ssh(
     result = aleph_cli(
         "instance", "create", "test-confidential",
         "--image", confidential_rootfs_hash,
-        "--confidential",
+        # Since aleph-cli 0.19.0, --confidential means SEV-SNP by default and
+        # rejects --confidential-firmware (SNP runtimes carry their own
+        # firmware). This test covers the session-based legacy SEV flow, so
+        # ask for it explicitly.
+        "--confidential", "--tee", "sev",
         "--confidential-firmware", confidential_firmware_hash,
         "--vcpus", "1",
         "--memory", "4GiB",

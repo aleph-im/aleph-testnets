@@ -57,6 +57,8 @@ the host's real routed /64 once the provider attaches one.
 
 - SEV-SNP enabled in firmware
 - The GPU card in confidential-compute mode and VFIO-bound
+- Docker (`docker.io`): static CRNs skip the base-package install, and the
+  vm-connector runs as a container
 - QEMU >= 9.1 on `PATH` (Ubuntu 24.04's packaged QEMU 8.2 cannot launch SNP
   guests with a GPU attached; a newer build must live somewhere `PATH`
   resolves it, e.g. `/usr/local/bin/qemu-system-x86_64`)

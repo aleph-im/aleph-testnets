@@ -29,6 +29,11 @@
 #                               (workload contract aleph.compose/1), bundle.ref
 #                               patched per-run like the vprogram one
 #
+# With --gpu (or VPROGRAM_GPU=1), also fetches the GPU fixtures:
+#   6. gpu-snp-image.tar.gz       — runtime bundle for the CUDA V-PROGRAM
+#   7. gpu-manifest-template.json — its manifest, bundle.ref patched per-run
+#   8. cuda-workload.ext4         — cuda-probe workload volume
+#
 # Everything is verified against pinned sha256s: the artifacts are immutable
 # fixtures, so a mismatch means a broken download or a tampered source, and
 # either must fail the run.
@@ -40,6 +45,15 @@ OUT_DIR="$REPO_ROOT/.local/vprogram"
 ALEPH_STORAGE_URL="https://official.aleph.cloud/api/v0/storage/raw"
 ALEPH_IPFS_URL="https://ipfs.aleph.cloud/ipfs"
 FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-2"
+GPU_FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-gpu-1"
+
+GPU=0
+for arg in "$@"; do
+    case "$arg" in
+        --gpu) GPU=1 ;;
+    esac
+done
+if [ "${VPROGRAM_GPU:-0}" = "1" ]; then GPU=1; fi
 
 # sha256 of every fixture; native-storage assets are fetched from Aleph
 # storage by this same hash, the IPFS-hosted compose bundle by its CID.
@@ -57,6 +71,15 @@ declare -A SOURCES=(
     [compose-image.tar.gz]="$FIXTURES_URL/compose-snp-image.tar.gz"
     [compose-manifest-template.json]="$FIXTURES_URL/compose-manifest-template.json"
 )
+
+if [ "$GPU" = "1" ]; then
+    CHECKSUMS[gpu-snp-image.tar.gz]="45f734afd4a00dfb689ba6055b2e1a67cb6778c40a9e72e348c316ff7e7c4c4e"
+    CHECKSUMS[gpu-manifest-template.json]="dd8f520bc632c9f44a07619cc008b6eab31b7b74f1b8fb5e744d39032a21d3e4"
+    CHECKSUMS[cuda-workload.ext4]="14a3b44d14d7f2e39d0ff2587e57acae995a158f07dfc8b59f446d7f81050b5e"
+    SOURCES[gpu-snp-image.tar.gz]="$GPU_FIXTURES_URL/gpu-snp-image.tar.gz"
+    SOURCES[gpu-manifest-template.json]="$GPU_FIXTURES_URL/gpu-manifest-template.json"
+    SOURCES[cuda-workload.ext4]="$GPU_FIXTURES_URL/cuda-workload.ext4"
+fi
 
 mkdir -p "$OUT_DIR"
 # Drop stale fixtures from the previous runtime generation.

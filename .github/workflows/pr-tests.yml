@@ -358,7 +358,10 @@ jobs:
           # Prebuilt runtime bundle + fib-service workload from the
           # vprogram-fixtures release; tests/test_vprograms.py skips when
           # .local/vprogram is absent (local-up.sh exports its path).
-          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/vprogram-artifacts.sh"
+          # --gpu also fetches the CUDA V-PROGRAM fixtures for the opt-in run.
+          gpu_flag=""
+          if [ "$GPU_RUN" = "true" ]; then gpu_flag="--gpu"; fi
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/vprogram-artifacts.sh $gpu_flag"
 
       - name: Run tests
         run: |

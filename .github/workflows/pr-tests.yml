@@ -37,7 +37,7 @@ jobs:
     # bundle download on the TEE server) push the suite past the old 60.
     # GPU runs add a 229 MB bundle upload, a GPU guest boot and a 900s
     # create wait on top of that.
-    timeout-minutes: ${{ inputs.gpu == true && 110 || 75 }}
+    timeout-minutes: 110
     environment: digitalocean
     # Serialize across ALL runs (not just per-PR): the static TEE server can
     # only host one CI run at a time. Caveat: GitHub keeps a single pending
@@ -54,7 +54,7 @@ jobs:
         run: |
           # inputs.gpu is unset (empty) on pull_request events, so this
           # defaults to false there and on a dispatch without gpu=true.
-          if [ "${{ inputs.gpu }}" = "true" ]; then
+          if true; then  # TEMPORARY: force a GPU run from this PR, do not merge
             echo "GPU_RUN=true" >> "$GITHUB_ENV"
             echo "CRN_COUNT=$((DO_CRN_COUNT + 2))" >> "$GITHUB_ENV"
           else
@@ -257,8 +257,8 @@ jobs:
       - name: Setup environment
         run: |
           ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
-            ALEPH_CLI_URL='${{ inputs.aleph_cli_url }}' \
-            PYALEPH_TAG='${{ inputs.pyaleph_tag }}' \
+            ALEPH_CLI_URL='https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-gpu-3/aleph-cli-linux-x86_64-96cb1e5' \
+            PYALEPH_TAG='0.12.0-rc0' \
             bash scripts/local-up.sh --env"
 
       - name: Start stack
@@ -332,7 +332,7 @@ jobs:
             CRN_COUNT=${CRN_COUNT} \
             STATIC_CRN_IPV6_POOL='${{ vars.AMD_SEV_SNP_IPV6_POOL }}' \
             GPU_CRN_IPV6_POOL='${{ vars.NVIDIA_CC_IPV6_POOL }}' \
-            ALEPH_VM_BRANCH='${{ inputs.aleph_vm_branch }}' \
+            ALEPH_VM_BRANCH='dev-2.1.2' \
             GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             bash scripts/crn-up.sh --install"
 

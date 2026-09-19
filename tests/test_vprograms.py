@@ -44,6 +44,44 @@ def _vprogram_message(objs: list[dict]) -> dict:
     raise AssertionError(f"no V-PROGRAM message in CLI output: {objs}")
 
 
+def _attested_call_with_retry(aleph_cli, item_hash, path, endpoint, *extra_args, deadline_secs=120):
+    """`vprogram call <item_hash> <path>`, retrying transport-level failures.
+
+    The attestation port is mapped as soon as the VM reaches RUNNING, a few
+    seconds before the guest's attest agent binds it (run 31382627461: call
+    at 11:46:49, guest bind at 11:46:52), so retry transport failures
+    briefly. Verification failures still fail fast.
+    """
+    deadline = time.time() + deadline_secs
+    curl_probe = None
+    while True:
+        result = aleph_cli(
+            "vprogram", "call", item_hash, path, *extra_args,
+            check=False, timeout=120,
+        )
+        if result.returncode == 0:
+            return result
+        if curl_probe is None:
+            # Transport ground truth, captured in the same seconds the CLI
+            # fails: a raw TLS request with NO attestation verification.
+            # 200 here + a CLI failure isolates the failure to attestation
+            # itself; a curl failure means the endpoint genuinely is not
+            # reachable.
+            probe_url = endpoint.rstrip("/") + path
+            p = subprocess.run(
+                ["curl", "-ks", "-o", "/dev/null", "-w", "%{http_code}", probe_url],
+                capture_output=True, text=True, timeout=15,
+            )
+            curl_probe = p.stdout.strip() or "no-response"
+        transient = "error sending request" in (result.stderr or "")
+        if not transient or time.time() >= deadline:
+            raise AssertionError(
+                f"attested {path} call failed (unverified curl probe of the same "
+                f"endpoint: HTTP {curl_probe}): {(result.stderr or '')[-1000:]}"
+            )
+        time.sleep(5)
+
+
 def test_vprogram_deploy_and_attested_call(
     aleph_cli, vprogram_dir, vprogram_runtime_hash, confidential_crn_host
 ):
@@ -75,10 +113,16 @@ def test_vprogram_deploy_and_attested_call(
         "V-PROGRAM is running but no attested endpoint was resolved — "
         "is the CRN mapping the :8443 attestation port (aleph-vm#1079)?"
     )
-    # V-PROGRAMs are SEV-SNP only: placement anywhere but the TEE server
-    # means the scheduler's capability matching regressed.
-    assert confidential_crn_host in endpoint, (
-        f"attested endpoint {endpoint} is not on the TEE server {confidential_crn_host}"
+    # V-PROGRAMs are SEV-SNP only: placement anywhere but a known SNP CRN
+    # means the scheduler's capability matching regressed. This V-PROGRAM
+    # needs no GPU, so on an opt-in GPU run the scheduler may place it on
+    # either SNP host.
+    allowed_hosts = [confidential_crn_host]
+    gpu_host = os.environ.get("ALEPH_TESTNET_NVIDIA_CC_CRN_HOST", "")
+    if gpu_host:
+        allowed_hosts.append(gpu_host)
+    assert any(host in endpoint for host in allowed_hosts), (
+        f"attested endpoint {endpoint} is not on a known SNP CRN {allowed_hosts}"
     )
 
     # show: pinned measurements present, CRN reports the VM as running.
@@ -88,38 +132,7 @@ def test_vprogram_deploy_and_attested_call(
 
     # Attested calls: the response body is only ever printed after the full
     # RA-TLS verification (report chain, key binding, measurement pin).
-    # The attestation port is mapped as soon as the VM reaches RUNNING, a few
-    # seconds before the guest's attest agent binds :8443 (run 31382627461:
-    # call at 11:46:49, guest bind at 11:46:52), so retry transport-level
-    # failures briefly. Verification failures still fail fast.
-    deadline = time.time() + 120
-    curl_probe = None
-    while True:
-        health = aleph_cli(
-            "vprogram", "call", item_hash, "/health", *TCB_FLOOR_ARGS,
-            check=False, timeout=120,
-        )
-        if health.returncode == 0:
-            break
-        if curl_probe is None:
-            # Transport ground truth, captured in the same seconds the CLI
-            # fails: a raw TLS request with NO attestation verification.
-            # 200 here + a CLI failure isolates the failure to attestation
-            # itself (whose reason the rc2 CLI names via aleph-rs#319);
-            # a curl failure means the endpoint genuinely is not reachable.
-            probe_url = endpoint.rstrip("/") + "/health"
-            p = subprocess.run(
-                ["curl", "-ks", "-o", "/dev/null", "-w", "%{http_code}", probe_url],
-                capture_output=True, text=True, timeout=15,
-            )
-            curl_probe = p.stdout.strip() or "no-response"
-        transient = "error sending request" in (health.stderr or "")
-        if not transient or time.time() >= deadline:
-            raise AssertionError(
-                f"attested /health call failed (unverified curl probe of the same "
-                f"endpoint: HTTP {curl_probe}): {(health.stderr or '')[-1000:]}"
-            )
-        time.sleep(5)
+    health = _attested_call_with_retry(aleph_cli, item_hash, "/health", endpoint, *TCB_FLOOR_ARGS)
     assert json.loads(health.stdout)["status"] == "ok"
 
     fib = aleph_cli(

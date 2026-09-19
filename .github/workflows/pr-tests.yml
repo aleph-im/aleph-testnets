@@ -35,7 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     # Two SEV-SNP V-PROGRAM boots (exec + compose, each with a runtime
     # bundle download on the TEE server) push the suite past the old 60.
-    timeout-minutes: 75
+    # GPU runs add a 229 MB bundle upload, a GPU guest boot and a 900s
+    # create wait on top of that.
+    timeout-minutes: ${{ inputs.gpu == true && 110 || 75 }}
     environment: digitalocean
     # Serialize across ALL runs (not just per-PR): the static TEE server can
     # only host one CI run at a time. Caveat: GitHub keeps a single pending
@@ -97,7 +99,7 @@ jobs:
 
       - name: Create CCN and CRN Droplets
         run: |
-          CCN_NAME="testnets-pr-${{ github.event.number }}-${{ github.run_id }}"
+          CCN_NAME="testnets-pr-${{ github.event.number || github.run_id }}-${{ github.run_id }}"
           echo "DROPLET_NAME=$CCN_NAME" >> "$GITHUB_ENV"
 
           # Create CCN droplet
@@ -115,7 +117,7 @@ jobs:
           # Create CRN droplets in parallel (one per DO_CRN_COUNT)
           declare -a CRN_PIDS=()
           for idx in $(seq 0 $((DO_CRN_COUNT - 1))); do
-            crn_name="testnets-crn-${idx}-pr${{ github.event.number }}-${{ github.run_id }}"
+            crn_name="testnets-crn-${idx}-pr${{ github.event.number || github.run_id }}-${{ github.run_id }}"
             echo "CRN_${idx}_NAME=$crn_name" >> "$GITHUB_ENV"
 
             doctl compute droplet create \
@@ -361,7 +363,7 @@ jobs:
           # --gpu also fetches the CUDA V-PROGRAM fixtures for the opt-in run.
           gpu_flag=""
           if [ "$GPU_RUN" = "true" ]; then gpu_flag="--gpu"; fi
-          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/vprogram-artifacts.sh $gpu_flag"
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/vprogram-artifacts.sh ${gpu_flag:+"$gpu_flag"}"
 
       - name: Run tests
         run: |

@@ -581,9 +581,10 @@ def vprogram_runtime_hash(aleph_cli, vprogram_dir, tmp_path_factory) -> str:
 
 
 @pytest.fixture(scope="session")
-def vprogram_gpu_runtime_hash(aleph_cli, vprogram_dir, tmp_path_factory) -> str:
+def vprogram_gpu_runtime_hash(nvidia_cc_crn_host, aleph_cli, vprogram_dir, tmp_path_factory) -> str:
     """Same two-step upload as vprogram_runtime_hash, for the CUDA V-PROGRAM's
-    GPU runtime bundle (gpu-snp-image.tar.gz + gpu-manifest-template.json)."""
+    GPU runtime bundle (gpu-snp-image.tar.gz + gpu-manifest-template.json).
+    Depends on nvidia_cc_crn_host so default runs skip before any upload."""
     return _upload_vprogram_runtime(
         aleph_cli, vprogram_dir, tmp_path_factory,
         "gpu-snp-image.tar.gz", "gpu-manifest-template.json", "vprogram-gpu",

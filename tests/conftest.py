@@ -352,8 +352,8 @@ def tee_pin_args() -> tuple:
     if not crn_hash:
         pytest.fail(
             "ALEPH_TESTNET_NVIDIA_CC_CRN_HOST is set but "
-            "ALEPH_TESTNET_CONFIDENTIAL_CRN_HASH is not — cannot pin "
-            "non-GPU confidential tests to the TEE server"
+            "ALEPH_TESTNET_CONFIDENTIAL_CRN_HASH is not set, so non-GPU "
+            "confidential tests cannot be pinned to the TEE server"
         )
     return ("--crn", crn_hash)
 

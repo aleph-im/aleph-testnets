@@ -30,9 +30,9 @@
 #                               patched per-run like the vprogram one
 #
 # With --gpu (or VPROGRAM_GPU=1), also fetches the GPU fixtures:
-#   6. gpu-snp-image.tar.gz       — runtime bundle for the CUDA V-PROGRAM
-#   7. gpu-manifest-template.json — its manifest, bundle.ref patched per-run
-#   8. cuda-workload.ext4         — cuda-probe workload volume
+#   6. gpu-snp-image.tar.gz: runtime bundle for the CUDA V-PROGRAM
+#   7. gpu-manifest-template.json: its manifest, bundle.ref patched per-run
+#   8. cuda-workload.ext4: cuda-probe workload volume
 #
 # Everything is verified against pinned sha256s: the artifacts are immutable
 # fixtures, so a mismatch means a broken download or a tampered source, and

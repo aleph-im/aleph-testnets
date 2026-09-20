@@ -53,6 +53,20 @@ This satisfies the scheduler's placement check without claiming a real
 route; the GPU test itself does no IPv6 reachability probe. Replace it with
 the host's real routed /64 once the provider attaches one.
 
+## Non-GPU confidential tests are pinned to the TEE server
+
+Once the GPU host reports confidential capability to the scheduler, it
+becomes a valid placement target for any SEV-SNP workload, not just GPU
+ones. The non-GPU confidential and V-PROGRAM tests need specifics that only
+live on the TEE server (the routed IPv6 /64, prepared confidential
+artifacts, the TCB override flags), so on a GPU run they pass `--crn
+<hash>` to pin their workload there instead of letting the scheduler pick
+between the two SEV-SNP hosts. The pin is a no-op outside GPU runs: the
+`tee_pin_args` conftest fixture is empty unless
+`ALEPH_TESTNET_NVIDIA_CC_CRN_HOST` is set, so default runs still exercise
+plain scheduler capability matching. `tests/test_vprograms_gpu.py` is never
+pinned, since its whole purpose is to prove the scheduler's GPU matching.
+
 ## Host prerequisites
 
 - SEV-SNP enabled in firmware

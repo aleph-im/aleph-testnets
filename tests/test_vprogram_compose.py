@@ -51,7 +51,7 @@ services:
 
 
 def test_vprogram_compose_deploy_and_attested_call(
-    aleph_cli, vprogram_compose_runtime_hash, confidential_crn_host, tmp_path
+    aleph_cli, vprogram_compose_runtime_hash, confidential_crn_host, tmp_path, tee_pin_args
 ):
     compose_file = tmp_path / "docker-compose.yml"
     compose_file.write_text(COMPOSE_YML)
@@ -70,6 +70,7 @@ def test_vprogram_compose_deploy_and_attested_call(
         "--runtime", vprogram_compose_runtime_hash,
         "--chain", "eth",
         "--wait", str(CREATE_WAIT_SECS),
+        *tee_pin_args,
         check=False,
         timeout=CREATE_WAIT_SECS + 300,
     )
@@ -189,7 +190,7 @@ def _build_volume_image(tmp_path) -> str:
 
 
 def test_vprogram_compose_verified_volume(
-    aleph_cli, vprogram_compose_runtime_hash, confidential_crn_host, tmp_path
+    aleph_cli, vprogram_compose_runtime_hash, confidential_crn_host, tmp_path, tee_pin_args
 ):
     compose_file = tmp_path / "docker-compose.yml"
     compose_file.write_text(VOLUME_COMPOSE_YML)
@@ -210,6 +211,7 @@ def test_vprogram_compose_verified_volume(
         "--runtime", vprogram_compose_runtime_hash,
         "--chain", "eth",
         "--wait", str(CREATE_WAIT_SECS),
+        *tee_pin_args,
         check=False,
         timeout=CREATE_WAIT_SECS + 300,
     )

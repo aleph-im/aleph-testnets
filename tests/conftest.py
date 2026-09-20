@@ -337,6 +337,28 @@ def nvidia_cc_crn_host() -> str:
 
 
 @pytest.fixture(scope="session")
+def tee_pin_args() -> tuple:
+    """`--crn` pin args for non-GPU confidential tests during a GPU run.
+
+    Only the TEE server has the artifacts, routed IPv6 /64 and TCB override
+    flags these tests depend on; once the GPU host reports confidential
+    capability, the scheduler is free to place them there instead. Splat
+    into the create command. Empty when ALEPH_TESTNET_NVIDIA_CC_CRN_HOST is
+    unset, so default runs test plain scheduler matching, unpinned.
+    """
+    if not os.environ.get("ALEPH_TESTNET_NVIDIA_CC_CRN_HOST"):
+        return ()
+    crn_hash = os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_CRN_HASH", "")
+    if not crn_hash:
+        pytest.fail(
+            "ALEPH_TESTNET_NVIDIA_CC_CRN_HOST is set but "
+            "ALEPH_TESTNET_CONFIDENTIAL_CRN_HASH is not — cannot pin "
+            "non-GPU confidential tests to the TEE server"
+        )
+    return ("--crn", crn_hash)
+
+
+@pytest.fixture(scope="session")
 def confidential_password() -> str:
     """Disk-decryption password baked into the encrypted rootfs by
     scripts/confidential-artifacts.sh. A fixed, non-secret test value —

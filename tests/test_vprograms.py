@@ -83,7 +83,7 @@ def _attested_call_with_retry(aleph_cli, item_hash, path, endpoint, *extra_args,
 
 
 def test_vprogram_deploy_and_attested_call(
-    aleph_cli, vprogram_dir, vprogram_runtime_hash, confidential_crn_host
+    aleph_cli, vprogram_dir, vprogram_runtime_hash, confidential_crn_host, tee_pin_args
 ):
     workload = os.path.join(vprogram_dir, "fib-workload.ext4")
 
@@ -94,6 +94,7 @@ def test_vprogram_deploy_and_attested_call(
         "--runtime", vprogram_runtime_hash,
         "--chain", "eth",
         "--wait", str(CREATE_WAIT_SECS),
+        *tee_pin_args,
         check=False,
         timeout=CREATE_WAIT_SECS + 300,
     )
@@ -113,16 +114,10 @@ def test_vprogram_deploy_and_attested_call(
         "V-PROGRAM is running but no attested endpoint was resolved — "
         "is the CRN mapping the :8443 attestation port (aleph-vm#1079)?"
     )
-    # V-PROGRAMs are SEV-SNP only: placement anywhere but a known SNP CRN
-    # means the scheduler's capability matching regressed. This V-PROGRAM
-    # needs no GPU, so on an opt-in GPU run the scheduler may place it on
-    # either SNP host.
-    allowed_hosts = [confidential_crn_host]
-    gpu_host = os.environ.get("ALEPH_TESTNET_NVIDIA_CC_CRN_HOST", "")
-    if gpu_host:
-        allowed_hosts.append(gpu_host)
-    assert any(host in endpoint for host in allowed_hosts), (
-        f"attested endpoint {endpoint} is not on a known SNP CRN {allowed_hosts}"
+    # V-PROGRAMs are SEV-SNP only: placement anywhere but the TEE server
+    # means the scheduler's capability matching regressed.
+    assert confidential_crn_host in endpoint, (
+        f"attested endpoint {endpoint} is not on the TEE server {confidential_crn_host}"
     )
 
     # show: pinned measurements present, CRN reports the VM as running.

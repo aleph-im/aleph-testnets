@@ -62,7 +62,8 @@ def test_gpu_vprogram_deploy_and_attested_cuda_call(
         assert shown["measurements"], "no measurements pinned on the message"
         assert shown["running"] is True, f"CRN does not report the VM as active: {shown}"
         assert shown.get("gpu") == {
-            "vendor": "nvidia", "arch": "hopper", "count": 1, "mode": "cc",
+            "vendor": "nvidia", "arch": "hopper", "count": 1,
+            "models": [H200_NVL_PCI_ID], "mode": "cc",
         }, f"unexpected gpu requirement dict: {shown.get('gpu')}"
 
         gpu_probe = _attested_call_with_retry(aleph_cli, item_hash, "/gpu", endpoint)

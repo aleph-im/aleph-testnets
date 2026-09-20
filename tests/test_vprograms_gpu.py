@@ -13,6 +13,10 @@ import os
 from tests.test_programs import _parse_json_stream
 from tests.test_vprograms import CREATE_WAIT_SECS, _attested_call_with_retry, _vprogram_message
 
+# The NVIDIA CC host's card. Pinning it exercises the guest's signed board
+# identity check, not only the scheduler's device id match.
+H200_NVL_PCI_ID = "10de:233b"
+
 
 def test_gpu_vprogram_deploy_and_attested_cuda_call(
     aleph_cli, vprogram_dir, vprogram_gpu_runtime_hash, nvidia_cc_crn_host, confidential_crn_host
@@ -27,6 +31,7 @@ def test_gpu_vprogram_deploy_and_attested_cuda_call(
             "--workload", workload,
             "--runtime", vprogram_gpu_runtime_hash,
             "--gpu", "hopper",
+            "--gpu-model", H200_NVL_PCI_ID,
             "--memory", "4096",
             "--chain", "eth",
             "--wait", str(CREATE_WAIT_SECS),

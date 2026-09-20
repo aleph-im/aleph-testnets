@@ -45,7 +45,7 @@ OUT_DIR="$REPO_ROOT/.local/vprogram"
 ALEPH_STORAGE_URL="https://official.aleph.cloud/api/v0/storage/raw"
 ALEPH_IPFS_URL="https://ipfs.aleph.cloud/ipfs"
 FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-2"
-GPU_FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-gpu-1"
+GPU_FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-gpu-2"
 
 GPU=0
 for arg in "$@"; do
@@ -73,8 +73,8 @@ declare -A SOURCES=(
 )
 
 if [ "$GPU" = "1" ]; then
-    CHECKSUMS[gpu-snp-image.tar.gz]="45f734afd4a00dfb689ba6055b2e1a67cb6778c40a9e72e348c316ff7e7c4c4e"
-    CHECKSUMS[gpu-manifest-template.json]="dd8f520bc632c9f44a07619cc008b6eab31b7b74f1b8fb5e744d39032a21d3e4"
+    CHECKSUMS[gpu-snp-image.tar.gz]="9dfa98cb85e78214a8fb5855b77cdbbc6f32fef710533946bf32e51828c89cac"
+    CHECKSUMS[gpu-manifest-template.json]="7c829fe1aeec7cd669d754b2dbbb35e1e961b2ff541c1c9628caaa4b31b7064d"
     CHECKSUMS[cuda-workload.ext4]="14a3b44d14d7f2e39d0ff2587e57acae995a158f07dfc8b59f446d7f81050b5e"
     SOURCES[gpu-snp-image.tar.gz]="$GPU_FIXTURES_URL/gpu-snp-image.tar.gz"
     SOURCES[gpu-manifest-template.json]="$GPU_FIXTURES_URL/gpu-manifest-template.json"

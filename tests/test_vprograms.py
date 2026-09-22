@@ -50,7 +50,10 @@ def _attested_call_with_retry(aleph_cli, item_hash, path, endpoint, *extra_args,
     The attestation port is mapped as soon as the VM reaches RUNNING, a few
     seconds before the guest's attest agent binds it (run 31382627461: call
     at 11:46:49, guest bind at 11:46:52), so retry transport failures
-    briefly. Verification failures still fail fast.
+    briefly. Once the agent is up it answers a workload that is not yet
+    listening with 503 "upstream not ready" (aleph-vm#1282; 502 "upstream
+    unreachable" before) while the CLI exits 0: retry those too.
+    Verification failures still fail fast.
     """
     deadline = time.time() + deadline_secs
     curl_probe = None
@@ -59,9 +62,11 @@ def _attested_call_with_retry(aleph_cli, item_hash, path, endpoint, *extra_args,
             "vprogram", "call", item_hash, path, *extra_args,
             check=False, timeout=120,
         )
-        if result.returncode == 0:
+        body = result.stdout or ""
+        starting = "upstream not ready" in body or "upstream unreachable" in body
+        if result.returncode == 0 and not starting:
             return result
-        if curl_probe is None:
+        if result.returncode != 0 and curl_probe is None:
             # Transport ground truth, captured in the same seconds the CLI
             # fails: a raw TLS request with NO attestation verification.
             # 200 here + a CLI failure isolates the failure to attestation
@@ -73,7 +78,7 @@ def _attested_call_with_retry(aleph_cli, item_hash, path, endpoint, *extra_args,
                 capture_output=True, text=True, timeout=15,
             )
             curl_probe = p.stdout.strip() or "no-response"
-        transient = "error sending request" in (result.stderr or "")
+        transient = starting or "error sending request" in (result.stderr or "")
         if not transient or time.time() >= deadline:
             raise AssertionError(
                 f"attested {path} call failed (unverified curl probe of the same "

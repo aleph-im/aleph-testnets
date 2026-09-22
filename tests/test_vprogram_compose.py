@@ -50,6 +50,13 @@ services:
 """
 
 
+# The attest agent answers a not-yet-listening workload with 503 "upstream
+# not ready" (aleph-vm#1282) and other upstream failures with 502
+# "upstream unreachable"; both mean the stack is still coming up.
+def _upstream_starting(body: str) -> bool:
+    return "upstream not ready" in body or "upstream unreachable" in body
+
+
 def test_vprogram_compose_deploy_and_attested_call(
     aleph_cli, vprogram_compose_runtime_hash, confidential_crn_host, tmp_path, tee_pin_args
 ):
@@ -96,11 +103,12 @@ def test_vprogram_compose_deploy_and_attested_call(
     # Attested call through the RA-TLS channel. The compose guest has real
     # startup work left after the attestation port maps: verity-mount the
     # workload volume, podman-load the image archives, compose up. During
-    # that window the attest agent is already up and answers with an
-    # upstream-unreachable 502 body while the CLI exits 0 (attestation
-    # itself succeeded; run 32372006187), so BOTH transport failures
-    # (rc != 0) and 502 bodies are the not-ready-yet signal. Verification
-    # failures fail fast.
+    # that window the attest agent is already up and answers with a
+    # not-ready body while the CLI exits 0 (attestation itself succeeded;
+    # run 32372006187): 503 "upstream not ready" since aleph-vm#1282, 502
+    # "upstream unreachable" before. BOTH transport failures (rc != 0) and
+    # those bodies are the not-ready-yet signal. Verification failures fail
+    # fast.
     deadline = time.time() + 240
     curl_probe = None
     while True:
@@ -112,7 +120,7 @@ def test_vprogram_compose_deploy_and_attested_call(
         if root.returncode == 0 and "Hostname:" in body:
             break
         transient_transport = root.returncode != 0 and "error sending request" in (root.stderr or "")
-        stack_starting = root.returncode == 0 and "upstream unreachable" in body
+        stack_starting = root.returncode == 0 and _upstream_starting(body)
         if transient_transport and curl_probe is None:
             # Transport ground truth with NO attestation verification, to
             # isolate attestation failures from plain unreachability.
@@ -240,8 +248,9 @@ def test_vprogram_compose_verified_volume(
     assert shown["running"] is True, f"CRN does not report the VM as active: {shown}"
     assert shown["storage"]["volumes"], "no verified volume declared on the message"
 
-    # Same startup poll as the whoami test: transport errors and 502
-    # (compose stack still starting) are the not-ready-yet signals.
+    # Same startup poll as the whoami test: transport errors and the
+    # agent's not-ready bodies (compose stack still starting) are the
+    # not-ready-yet signals.
     deadline = time.time() + 240
     curl_probe = None
     while True:
@@ -253,7 +262,7 @@ def test_vprogram_compose_verified_volume(
         if marker.returncode == 0 and "quetsche" in body:
             break
         transient_transport = marker.returncode != 0 and "error sending request" in (marker.stderr or "")
-        stack_starting = marker.returncode == 0 and "upstream unreachable" in body
+        stack_starting = marker.returncode == 0 and _upstream_starting(body)
         if transient_transport and curl_probe is None:
             probe_url = endpoint.rstrip("/") + "/marker.json"
             p = subprocess.run(

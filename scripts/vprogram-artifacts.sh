@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # Fetch the prebuilt V-PROGRAM test fixtures for tests/test_vprograms.py.
 #
-# The runtime (bundle + manifest) is the 2026.09.01 build: the 1.1
-# verified-volumes runtime (aleph-vm c5391963, #1176: {verified_volumes}
-# cmdline slot + guest /volumes/<i> verity mounts) plus the SNP guest
-# kernel fix (aleph-vm#1184: CONFIG_X86_PAT/CONFIG_MTRR; the 2026.08.31
-# bundles hung before console on real SEV-SNP and were never usable).
-# Hosted as assets on this repo's vprogram-fixtures-2 prerelease until
-# the fixed runtimes are republished on mainnet; sha256 pins below are
+# The runtimes (bundle + manifest) are the 2026.09.22 build from aleph-vm
+# 80e48a8e (dev-2.1.2: main at 0295bb08 plus the 2.2 work, aleph-tee
+# without openssl, the attest-agent proxy fixes and the GPU stack).
+# Hosted as assets on this repo's vprogram-fixtures-3 prerelease until
+# the runtimes are republished on mainnet; sha256 pins below are
 # still the integrity gate. The manifest templates carry the bundle
 # sha256 as a placeholder ref; conftest patches bundle.ref to the
 # per-run testnet STORE hash before uploading, so the stale ref is inert.
@@ -22,7 +20,7 @@
 #                               after uploading the bundle to the test net
 #   3. fib-workload.ext4      — fib-service workload volume (GET /health and
 #                               /fib/{n} on :8080)
-#   4. compose-image.tar.gz   — aleph.compose/1 runtime bundle (same 2026.09.01
+#   4. compose-image.tar.gz   — aleph.compose/1 runtime bundle (same 2026.09.22
 #                               build; podman + podman-compose platform rootfs).
 #                               268 MB, fetched from the same prerelease.
 #   5. compose-manifest-template.json — the compose runtime's manifest
@@ -44,8 +42,8 @@ OUT_DIR="$REPO_ROOT/.local/vprogram"
 
 ALEPH_STORAGE_URL="https://official.aleph.cloud/api/v0/storage/raw"
 ALEPH_IPFS_URL="https://ipfs.aleph.cloud/ipfs"
-FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-2"
-GPU_FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-gpu-2"
+FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-3"
+GPU_FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-gpu-3"
 
 GPU=0
 for arg in "$@"; do
@@ -58,11 +56,11 @@ if [ "${VPROGRAM_GPU:-0}" = "1" ]; then GPU=1; fi
 # sha256 of every fixture; native-storage assets are fetched from Aleph
 # storage by this same hash, the IPFS-hosted compose bundle by its CID.
 declare -A CHECKSUMS=(
-    [snp-image.tar.gz]="a8c9a8015a68986dd185f0f47eb08e9492d19273fe3f0166388619129693f63b"
-    [manifest-template.json]="3755ada182b57dbb58b1abf263cb7c4906e5181236d3694bb393f5de23f399e5"
+    [snp-image.tar.gz]="0d7c675cd36f050c3f5ff9e00bb2bc051700009a781599ad3b8b6ef856444a08"
+    [manifest-template.json]="dd542b6fb8dbb65f29091999f802aa3931b8cca6a0bcce76fc0145716f30680a"
     [fib-workload.ext4]="9b9c4ffe03b35ecec6ae418180e298f1f89fd74b71b9c77371271e43d0d619b0"
-    [compose-image.tar.gz]="7716df19f15e9793cd755d14665823d6cb8fdb083ac5878a3c4cf95ab813af60"
-    [compose-manifest-template.json]="55d568bc00cfe001d505c780a3b648eb6ec5a81752035eda9f73116d4cdbc37b"
+    [compose-image.tar.gz]="b603d6b33e12186c45aae1e16d2f99c33581d05fd517a607b2890a5ee9c90ff8"
+    [compose-manifest-template.json]="02d8ff005eb8febe33c7a7037336ef37e6194d1d930f9e707e6c0d85d5cb8695"
 )
 declare -A SOURCES=(
     [snp-image.tar.gz]="$FIXTURES_URL/exec-snp-image.tar.gz"
@@ -73,9 +71,9 @@ declare -A SOURCES=(
 )
 
 if [ "$GPU" = "1" ]; then
-    CHECKSUMS[gpu-snp-image.tar.gz]="9dfa98cb85e78214a8fb5855b77cdbbc6f32fef710533946bf32e51828c89cac"
-    CHECKSUMS[gpu-manifest-template.json]="7c829fe1aeec7cd669d754b2dbbb35e1e961b2ff541c1c9628caaa4b31b7064d"
-    CHECKSUMS[cuda-workload.ext4]="14a3b44d14d7f2e39d0ff2587e57acae995a158f07dfc8b59f446d7f81050b5e"
+    CHECKSUMS[gpu-snp-image.tar.gz]="38311062ee2f3198e52154ffec98340c4d6c479650a1f4da1fd61f2386bfbcbb"
+    CHECKSUMS[gpu-manifest-template.json]="0155e6908be033745389e73012067bc46c5f8b9ba7af1fc5a7803b18a742678f"
+    CHECKSUMS[cuda-workload.ext4]="32a12fa02855ca2def170a46788910136ba0fb89c72a611389b1f4b430fea3e2"
     SOURCES[gpu-snp-image.tar.gz]="$GPU_FIXTURES_URL/gpu-snp-image.tar.gz"
     SOURCES[gpu-manifest-template.json]="$GPU_FIXTURES_URL/gpu-manifest-template.json"
     SOURCES[cuda-workload.ext4]="$GPU_FIXTURES_URL/cuda-workload.ext4"

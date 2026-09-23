@@ -3,9 +3,27 @@ name: PR Integration Tests
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      gpu:
+        description: "Add the NVIDIA CC host as a second static confidential CRN"
+        type: boolean
+        default: false
+      aleph_vm_branch:
+        description: "Deploy aleph-vm from this branch instead of the manifesto pin"
+        type: string
+        default: ""
+      aleph_cli_url:
+        description: "Override the aleph CLI download URL from the manifesto"
+        type: string
+        default: ""
+      pyaleph_tag:
+        description: "Override the pyaleph image tag from the manifesto"
+        type: string
+        default: ""
 
 concurrency:
-  group: pr-tests-${{ github.event.number }}
+  group: pr-tests-${{ github.event.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -17,7 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     # Two SEV-SNP V-PROGRAM boots (exec + compose, each with a runtime
     # bundle download on the TEE server) push the suite past the old 60.
-    timeout-minutes: 75
+    # GPU runs add a 229 MB bundle upload, a GPU guest boot and a 900s
+    # create wait on top of that.
+    timeout-minutes: ${{ inputs.gpu == true && 110 || 75 }}
     environment: digitalocean
     # Serialize across ALL runs (not just per-PR): the static TEE server can
     # only host one CI run at a time. Caveat: GitHub keeps a single pending
@@ -28,10 +48,20 @@ jobs:
     env:
       # DigitalOcean CRN droplets to provision. The migration test requires 2.
       DO_CRN_COUNT: 2
-      # Total CRNs, including the static TEE server at index 2 (= DO_CRN_COUNT).
-      CRN_COUNT: 3
 
     steps:
+      - name: Compute run flags
+        run: |
+          # inputs.gpu is unset (empty) on pull_request events, so this
+          # defaults to false there and on a dispatch without gpu=true.
+          if [ "${{ inputs.gpu }}" = "true" ]; then
+            echo "GPU_RUN=true" >> "$GITHUB_ENV"
+            echo "CRN_COUNT=$((DO_CRN_COUNT + 2))" >> "$GITHUB_ENV"
+          else
+            echo "GPU_RUN=false" >> "$GITHUB_ENV"
+            echo "CRN_COUNT=$((DO_CRN_COUNT + 1))" >> "$GITHUB_ENV"
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -69,7 +99,7 @@ jobs:
 
       - name: Create CCN and CRN Droplets
         run: |
-          CCN_NAME="testnets-pr-${{ github.event.number }}-${{ github.run_id }}"
+          CCN_NAME="testnets-pr-${{ github.event.number || github.run_id }}-${{ github.run_id }}"
           echo "DROPLET_NAME=$CCN_NAME" >> "$GITHUB_ENV"
 
           # Create CCN droplet
@@ -87,7 +117,7 @@ jobs:
           # Create CRN droplets in parallel (one per DO_CRN_COUNT)
           declare -a CRN_PIDS=()
           for idx in $(seq 0 $((DO_CRN_COUNT - 1))); do
-            crn_name="testnets-crn-${idx}-pr${{ github.event.number }}-${{ github.run_id }}"
+            crn_name="testnets-crn-${idx}-pr${{ github.event.number || github.run_id }}-${{ github.run_id }}"
             echo "CRN_${idx}_NAME=$crn_name" >> "$GITHUB_ENV"
 
             doctl compute droplet create \
@@ -143,6 +173,13 @@ jobs:
           done
           # Static TEE server: already running, just trust its key.
           ssh-keyscan -H "${{ secrets.AMD_SEV_SNP_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          # Opt-in GPU host: also static, but an unreachable host must fail
+          # the run rather than silently skip the GPU CRN.
+          if [ "$GPU_RUN" = "true" ]; then
+            ssh-keyscan -H "${{ secrets.NVIDIA_CC_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+            ssh -o BatchMode=yes "${{ secrets.NVIDIA_CC_USER }}@${{ secrets.NVIDIA_CC_HOST }}" true
+          fi
 
       - name: Install system dependencies (CCN + CRN in parallel)
         run: |
@@ -219,7 +256,10 @@ jobs:
 
       - name: Setup environment
         run: |
-          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/local-up.sh --env"
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && \
+            ALEPH_CLI_URL='${{ inputs.aleph_cli_url }}' \
+            PYALEPH_TAG='${{ inputs.pyaleph_tag }}' \
+            bash scripts/local-up.sh --env"
 
       - name: Start stack
         run: |
@@ -259,6 +299,18 @@ jobs:
           ssh root@${DROPLET_IPV4} "echo '${{ secrets.AMD_SEV_SNP_USER }}' > /opt/aleph-testnets/.local/crn/${TEE_IDX}/ssh-user"
           ssh root@${DROPLET_IPV4} "touch /opt/aleph-testnets/.local/crn/${TEE_IDX}/static /opt/aleph-testnets/.local/crn/${TEE_IDX}/confidential"
 
+          # Opt-in GPU host as CRN index ${DO_CRN_COUNT}+1: same static +
+          # confidential shape as the TEE server, plus a gpu marker so
+          # crn-up.sh enables GPU support and its own IPv6 pool override.
+          if [ "$GPU_RUN" = "true" ]; then
+            GPU_IDX=$((DO_CRN_COUNT + 1))
+            ssh root@${DROPLET_IPV4} "mkdir -p /opt/aleph-testnets/.local/crn/${GPU_IDX}"
+            ssh root@${DROPLET_IPV4} "echo 'nvidia-cc-server' > /opt/aleph-testnets/.local/crn/${GPU_IDX}/droplet-name"
+            ssh root@${DROPLET_IPV4} "echo '${{ secrets.NVIDIA_CC_HOST }}' > /opt/aleph-testnets/.local/crn/${GPU_IDX}/droplet-ip"
+            ssh root@${DROPLET_IPV4} "echo '${{ secrets.NVIDIA_CC_USER }}' > /opt/aleph-testnets/.local/crn/${GPU_IDX}/ssh-user"
+            ssh root@${DROPLET_IPV4} "touch /opt/aleph-testnets/.local/crn/${GPU_IDX}/static /opt/aleph-testnets/.local/crn/${GPU_IDX}/confidential /opt/aleph-testnets/.local/crn/${GPU_IDX}/gpu"
+          fi
+
           # Copy SSH key to CCN droplet so it can reach the CRNs
           scp ~/.ssh/id_ed25519 root@${DROPLET_IPV4}:/root/.ssh/id_ed25519
           ssh root@${DROPLET_IPV4} "chmod 600 /root/.ssh/id_ed25519"
@@ -279,6 +331,8 @@ jobs:
             SSH_KEY_FILE=/root/.ssh/id_ed25519 \
             CRN_COUNT=${CRN_COUNT} \
             STATIC_CRN_IPV6_POOL='${{ vars.AMD_SEV_SNP_IPV6_POOL }}' \
+            GPU_CRN_IPV6_POOL='${{ vars.NVIDIA_CC_IPV6_POOL }}' \
+            ALEPH_VM_BRANCH='${{ inputs.aleph_vm_branch }}' \
             GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             bash scripts/crn-up.sh --install"
 
@@ -306,7 +360,10 @@ jobs:
           # Prebuilt runtime bundle + fib-service workload from the
           # vprogram-fixtures release; tests/test_vprograms.py skips when
           # .local/vprogram is absent (local-up.sh exports its path).
-          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/vprogram-artifacts.sh"
+          # --gpu also fetches the CUDA V-PROGRAM fixtures for the opt-in run.
+          gpu_flag=""
+          if [ "$GPU_RUN" = "true" ]; then gpu_flag="--gpu"; fi
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/vprogram-artifacts.sh ${gpu_flag:+"$gpu_flag"}"
 
       - name: Run tests
         run: |
@@ -354,6 +411,17 @@ jobs:
           $SSH "${SUDO}journalctl -u aleph-vm-supervisor.service --no-pager --since '$since'" > tee-supervisor.txt 2>&1 || true
           $SSH "${SUDO}journalctl -u aleph-vm-agent.service --no-pager --since '$since'" > tee-agent.txt 2>&1 || true
           $SSH "${SUDO}journalctl -u 'aleph-vm-controller@*' --no-pager --since '$since'" > tee-controllers.txt 2>&1 || true
+
+      - name: Collect NVIDIA CC host logs
+        if: always() && env.GPU_RUN == 'true'
+        run: |
+          GPU_HOST="${{ secrets.NVIDIA_CC_HOST }}"
+          GPU_USER="${{ secrets.NVIDIA_CC_USER }}"
+          since="45 min ago"
+          if [ "$GPU_USER" = "root" ]; then SSH="ssh root@$GPU_HOST"; SUDO=""; else SSH="ssh $GPU_USER@$GPU_HOST"; SUDO="sudo -n "; fi
+          $SSH "${SUDO}journalctl -u aleph-vm-supervisor.service --no-pager --since '$since'" > gpu-supervisor.txt 2>&1 || true
+          $SSH "${SUDO}journalctl -u aleph-vm-agent.service --no-pager --since '$since'" > gpu-agent.txt 2>&1 || true
+          $SSH "${SUDO}journalctl -u 'aleph-vm-controller@*' --no-pager --since '$since'" > gpu-controllers.txt 2>&1 || true
 
       - name: Collect TEE network diagnostics
         if: always()
@@ -461,11 +529,19 @@ jobs:
             tee-agent.txt
             tee-controllers.txt
             tee-network.txt
+            gpu-supervisor.txt
+            gpu-agent.txt
+            gpu-controllers.txt
 
       - name: Reset TEE server
         if: always()
         run: |
           bash scripts/tee-reset.sh "${{ secrets.AMD_SEV_SNP_HOST }}" "${{ secrets.AMD_SEV_SNP_USER }}" ~/.ssh/id_ed25519 || true
+
+      - name: Reset NVIDIA CC host
+        if: always() && env.GPU_RUN == 'true'
+        run: |
+          bash scripts/tee-reset.sh "${{ secrets.NVIDIA_CC_HOST }}" "${{ secrets.NVIDIA_CC_USER }}" ~/.ssh/id_ed25519 || true
 
       - name: Destroy CRN Droplets
         if: always()

@@ -43,6 +43,11 @@ for section in ('components', 'infrastructure'):
             print(f'{prefix}_TAG={info[\"tag\"]}')
 " > "$DEPLOY_DIR/.env"
 
+    # Override the manifesto's pyaleph tag (dispatch runs only).
+    if [ -n "${PYALEPH_TAG:-}" ]; then
+        echo "PYALEPH_TAG=$PYALEPH_TAG" >> "$DEPLOY_DIR/.env"
+    fi
+
     # Generate the scheduler's CRN signing key for EIP-191 allocation auth
     # (aleph-vm-scheduler#175 / aleph-vm#945). The scheduler signs allocation
     # requests with this key; CRNs authorize the derived address instead of a
@@ -72,12 +77,16 @@ for section in ('components', 'infrastructure'):
     fi
     echo "==> Downloading Aleph CLI..."
     mkdir -p "$BIN_DIR"
-    CLI_URL=$(python3 -c "
+    if [ -n "${ALEPH_CLI_URL:-}" ]; then
+        CLI_URL="$ALEPH_CLI_URL"
+    else
+        CLI_URL=$(python3 -c "
 import yaml
 with open('$REPO_ROOT/manifesto.yml') as f:
     m = yaml.safe_load(f)
 print(m['components']['aleph-cli']['url'])
 ")
+    fi
     curl -fsSL "$CLI_URL" -o "$BIN_DIR/aleph"
     chmod +x "$BIN_DIR/aleph"
     echo "==> CLI downloaded to $BIN_DIR/aleph"
@@ -252,11 +261,24 @@ run_tests() {
     if [ -f "$LOCAL_DIR/confidential/OVMF.fd" ]; then
         export ALEPH_TESTNET_CONFIDENTIAL_FIRMWARE="$LOCAL_DIR/confidential/OVMF.fd"
     fi
-    # TEE host: first CRN state dir carrying the `confidential` marker.
+    # TEE host: first CRN state dir carrying the `confidential` marker but
+    # not `gpu` (the GPU host carries both markers; it must not be picked up
+    # here, non-GPU confidential tests pin to this host during GPU runs).
     local crn_state_dir
     for crn_state_dir in "$LOCAL_DIR"/crn/*/; do
-        if [ -f "$crn_state_dir/confidential" ] && [ -f "$crn_state_dir/droplet-ip" ]; then
+        if [ -f "$crn_state_dir/confidential" ] && [ ! -f "$crn_state_dir/gpu" ] \
+            && [ -f "$crn_state_dir/droplet-ip" ]; then
             export ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST="$(cat "$crn_state_dir/droplet-ip")"
+            if [ -f "$crn_state_dir/crn-hash" ]; then
+                export ALEPH_TESTNET_CONFIDENTIAL_CRN_HASH="$(cat "$crn_state_dir/crn-hash")"
+            fi
+            break
+        fi
+    done
+    # GPU host: first CRN state dir carrying the `gpu` marker (opt-in runs only).
+    for crn_state_dir in "$LOCAL_DIR"/crn/*/; do
+        if [ -f "$crn_state_dir/gpu" ] && [ -f "$crn_state_dir/droplet-ip" ]; then
+            export ALEPH_TESTNET_NVIDIA_CC_CRN_HOST="$(cat "$crn_state_dir/droplet-ip")"
             break
         fi
     done

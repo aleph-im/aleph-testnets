@@ -183,6 +183,8 @@ crn_name() {
 #                  --destroy skip it; --install skips base system packages and
 #                  resets aleph-vm state (tee-reset.sh) before installing.
 #   confidential   Enable confidential computing (AMD SEV) in supervisor.env.
+#   gpu            Enable GPU passthrough in supervisor.env; uses
+#                  GPU_CRN_IPV6_POOL instead of STATIC_CRN_IPV6_POOL.
 crn_ssh_user() {
     local f
     f="$(crn_dir "$1")/ssh-user"
@@ -195,6 +197,10 @@ crn_is_static() {
 
 crn_is_confidential() {
     [ -f "$(crn_dir "$1")/confidential" ]
+}
+
+crn_is_gpu() {
+    [ -f "$(crn_dir "$1")/gpu" ]
 }
 
 # Fresh droplets intermittently reset SSH connections mid-handshake
@@ -409,12 +415,21 @@ EOF
         # NDP model the daemon's ndppd serves, and its egress is open (see
         # aleph-vm docs/plans/2026-07-03-scaleway-ipv6-experiments.md,
         # 2026-08-18 addendum).
-        if crn_is_static "$idx" && [ -n "${STATIC_CRN_IPV6_POOL:-}" ]; then
+        # GPU_CRN_IPV6_POOL plays the same role for the CRN carrying the gpu
+        # marker, which otherwise has no global IPv6 of its own.
+        local ipv6_override=""
+        if crn_is_static "$idx" && crn_is_gpu "$idx"; then
+            ipv6_override="${GPU_CRN_IPV6_POOL:-}"
+        elif crn_is_static "$idx"; then
+            ipv6_override="${STATIC_CRN_IPV6_POOL:-}"
+        fi
+
+        if [ -n "$ipv6_override" ]; then
             cat >> "$env_file" <<EOF
-ALEPH_VM_IPV6_ADDRESS_POOL=$STATIC_CRN_IPV6_POOL
+ALEPH_VM_IPV6_ADDRESS_POOL=$ipv6_override
 ALEPH_VM_IPV6_ALLOCATION_POLICY=dynamic
 EOF
-            echo "    IPv6 pool (override): $STATIC_CRN_IPV6_POOL"
+            echo "    IPv6 pool (override): $ipv6_override"
         elif [ -f "$ipv6_file" ]; then
             local ipv6_addr
             ipv6_addr=$(cat "$ipv6_file")
@@ -426,6 +441,11 @@ ALEPH_VM_IPV6_ADDRESS_POOL=$ipv6_pool
 ALEPH_VM_IPV6_ALLOCATION_POLICY=dynamic
 EOF
             echo "    IPv6 pool: $ipv6_pool"
+        elif crn_is_static "$idx" && crn_is_gpu "$idx"; then
+            # The run was explicitly asked to use the GPU host: an unusable
+            # IPv6 setup here is an error, not a silent skip.
+            echo "ERROR: GPU CRN $idx has no IPv6 pool (set GPU_CRN_IPV6_POOL) and no detected global IPv6" >&2
+            exit 1
         fi
 
         # If we already have a node hash from registration, include it
@@ -459,6 +479,15 @@ ALEPH_VM_ENABLE_CONFIDENTIAL_COMPUTING=true
 ALEPH_VM_SEV_CTL_PATH=/opt/sevctl
 EOF
             echo "    Confidential computing: enabled"
+        fi
+
+        # GPU passthrough (NVIDIA CC)
+        if crn_is_gpu "$idx"; then
+            cat >> "$env_file" <<EOF
+ALEPH_VM_ENABLE_GPU_SUPPORT=true
+ALEPH_VM_ENABLE_QEMU_SUPPORT=true
+EOF
+            echo "    GPU support: enabled"
         fi
 
         # Copy config (via /tmp: the SSH user may not be root)

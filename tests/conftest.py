@@ -327,6 +327,38 @@ def confidential_crn_host() -> str:
 
 
 @pytest.fixture(scope="session")
+def nvidia_cc_crn_host() -> str:
+    """Address of the opt-in NVIDIA CC host. tests/test_vprograms_gpu.py
+    skips without it (only set on GPU-flagged CI runs)."""
+    host = os.environ.get("ALEPH_TESTNET_NVIDIA_CC_CRN_HOST", "")
+    if not host:
+        pytest.skip("No NVIDIA CC host, requires ALEPH_TESTNET_NVIDIA_CC_CRN_HOST")
+    return host
+
+
+@pytest.fixture(scope="session")
+def tee_pin_args() -> tuple:
+    """`--crn` pin args for non-GPU confidential tests during a GPU run.
+
+    Only the TEE server has the artifacts, routed IPv6 /64 and TCB override
+    flags these tests depend on; once the GPU host reports confidential
+    capability, the scheduler is free to place them there instead. Splat
+    into the create command. Empty when ALEPH_TESTNET_NVIDIA_CC_CRN_HOST is
+    unset, so default runs test plain scheduler matching, unpinned.
+    """
+    if not os.environ.get("ALEPH_TESTNET_NVIDIA_CC_CRN_HOST"):
+        return ()
+    crn_hash = os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_CRN_HASH", "")
+    if not crn_hash:
+        pytest.fail(
+            "ALEPH_TESTNET_NVIDIA_CC_CRN_HOST is set but "
+            "ALEPH_TESTNET_CONFIDENTIAL_CRN_HASH is not set, so non-GPU "
+            "confidential tests cannot be pinned to the TEE server"
+        )
+    return ("--crn", crn_hash)
+
+
+@pytest.fixture(scope="session")
 def confidential_password() -> str:
     """Disk-decryption password baked into the encrypted rootfs by
     scripts/confidential-artifacts.sh. A fixed, non-secret test value —
@@ -510,10 +542,13 @@ def vprogram_dir() -> str:
     return path
 
 
-@pytest.fixture(scope="session")
-def vprogram_runtime_hash(aleph_cli, vprogram_dir, tmp_path_factory) -> str:
-    """Upload the runtime bundle + manifest; return the manifest's STORE item
-    hash (what `vprogram create --runtime` pins).
+def _upload_vprogram_runtime(
+    aleph_cli, vprogram_dir, tmp_path_factory,
+    bundle_name: str, manifest_name: str, tmp_dir: str,
+    what: str, bundle_timeout: float = 300,
+) -> str:
+    """Upload a runtime bundle + manifest template; return the manifest's
+    STORE item hash (what `vprogram create --runtime` pins).
 
     The manifest template ships with bundle.ref zeroed because the bundle's
     STORE hash only exists after this run's upload. The CRN downloads the
@@ -522,16 +557,39 @@ def vprogram_runtime_hash(aleph_cli, vprogram_dir, tmp_path_factory) -> str:
     published manifest honest."""
     bundle_hash = _upload_with_balance_retry(
         aleph_cli,
-        os.path.join(vprogram_dir, "snp-image.tar.gz"),
-        "V-PROGRAM runtime bundle",
-        timeout=300,
+        os.path.join(vprogram_dir, bundle_name),
+        f"{what} bundle",
+        timeout=bundle_timeout,
     )
-    with open(os.path.join(vprogram_dir, "manifest-template.json")) as f:
+    with open(os.path.join(vprogram_dir, manifest_name)) as f:
         manifest = json.load(f)
     manifest["bundle"]["ref"] = bundle_hash
-    out = tmp_path_factory.mktemp("vprogram") / "manifest.json"
+    out = tmp_path_factory.mktemp(tmp_dir) / "manifest.json"
     out.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
-    return _upload_with_balance_retry(aleph_cli, str(out), "V-PROGRAM runtime manifest")
+    return _upload_with_balance_retry(aleph_cli, str(out), f"{what} manifest")
+
+
+@pytest.fixture(scope="session")
+def vprogram_runtime_hash(aleph_cli, vprogram_dir, tmp_path_factory) -> str:
+    """Upload the runtime bundle + manifest; return the manifest's STORE item
+    hash (what `vprogram create --runtime` pins)."""
+    return _upload_vprogram_runtime(
+        aleph_cli, vprogram_dir, tmp_path_factory,
+        "snp-image.tar.gz", "manifest-template.json", "vprogram",
+        "V-PROGRAM runtime",
+    )
+
+
+@pytest.fixture(scope="session")
+def vprogram_gpu_runtime_hash(nvidia_cc_crn_host, aleph_cli, vprogram_dir, tmp_path_factory) -> str:
+    """Same two-step upload as vprogram_runtime_hash, for the CUDA V-PROGRAM's
+    GPU runtime bundle (gpu-snp-image.tar.gz + gpu-manifest-template.json).
+    Depends on nvidia_cc_crn_host so default runs skip before any upload."""
+    return _upload_vprogram_runtime(
+        aleph_cli, vprogram_dir, tmp_path_factory,
+        "gpu-snp-image.tar.gz", "gpu-manifest-template.json", "vprogram-gpu",
+        "V-PROGRAM GPU runtime", bundle_timeout=600,
+    )
 
 
 @pytest.fixture(scope="session")

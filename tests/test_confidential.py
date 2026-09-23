@@ -38,6 +38,7 @@ def test_confidential_instance_create_and_ssh(
     confidential_crn_host,
     scheduler_api_url,
     ssh_key_pair,
+    tee_pin_args,
 ):
     private_key_path, public_key_path = ssh_key_pair
 
@@ -124,6 +125,7 @@ def test_confidential_instance_create_and_ssh(
         "--disk-size", "4GiB",
         "--ssh-pubkey-file", public_key_path,
         "--chain", "eth",
+        *tee_pin_args,
         parse_json=True,
     )
     vm_hash = result["item_hash"]

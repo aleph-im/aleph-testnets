@@ -467,7 +467,7 @@ def _confidential_unlock(aleph_cli, vm_hash, conf: Confidential, context):
 
 
 def _create_confidential_instance(aleph_cli, conf: Confidential, public_key_path,
-                                  scheduler_api_url, name) -> DispatchedVM:
+                                  scheduler_api_url, name, tee_pin_args=()) -> DispatchedVM:
     _wait_scheduler_sees_tee(scheduler_api_url, conf.crn_host)
     result = aleph_cli(
         "instance", "create", name,
@@ -481,6 +481,7 @@ def _create_confidential_instance(aleph_cli, conf: Confidential, public_key_path
         "--disk-size", "4GiB",
         "--ssh-pubkey-file", public_key_path,
         "--chain", "eth",
+        *tee_pin_args,
         parse_json=True,
     )
     vm_hash = result["item_hash"]
@@ -530,6 +531,7 @@ def _assert_confidential_stop_start(aleph_cli, vm, conf, private_key_path, marke
 @pytest.mark.timeout(3600)
 def test_release_upgrade_preserves_running_instances(
     aleph_cli, rootfs_hash, ssh_key_pair, crn_ssh_key, confidential, scheduler_api_url,
+    tee_pin_args,
 ):
     """Package upgrade under load, exactly like an operator's node would see it.
 
@@ -563,6 +565,7 @@ def test_release_upgrade_preserves_running_instances(
         if confidential is not None:
             sev = _create_confidential_instance(
                 aleph_cli, confidential, public_key_path, scheduler_api_url, "upgrade-a-sev",
+                tee_pin_args,
             )
             wait_for_ssh(private_key_path, sev.crn_host, sev.ssh_port, timeout=300)
             _assert_sev_active(private_key_path, sev, "before upgrade")
@@ -752,7 +755,7 @@ def test_supervisor_impl_swap_preserves_running_instance(
 )
 @pytest.mark.timeout(2400)
 def test_supervisor_impl_swap_preserves_confidential_instance(
-    aleph_cli, ssh_key_pair, crn_ssh_key, confidential, scheduler_api_url,
+    aleph_cli, ssh_key_pair, crn_ssh_key, confidential, scheduler_api_url, tee_pin_args,
 ):
     """Same swap with an AMD SEV instance live on the TEE server: the Rust
     daemon must adopt a confidential controller (session files, policy) and
@@ -763,6 +766,7 @@ def test_supervisor_impl_swap_preserves_confidential_instance(
 
     sev = _create_confidential_instance(
         aleph_cli, confidential, public_key_path, scheduler_api_url, "upgrade-b-sev",
+        tee_pin_args,
     )
     try:
         wait_for_ssh(private_key_path, sev.crn_host, sev.ssh_port, timeout=300)

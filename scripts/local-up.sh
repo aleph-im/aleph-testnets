@@ -262,12 +262,12 @@ run_tests() {
         export ALEPH_TESTNET_CONFIDENTIAL_FIRMWARE="$LOCAL_DIR/confidential/OVMF.fd"
     fi
     # TEE host: first CRN state dir carrying the `confidential` marker but
-    # not `gpu` (the GPU host carries both markers; it must not be picked up
-    # here, non-GPU confidential tests pin to this host during GPU runs).
+    # neither `gpu` nor `tdx` (those hosts carry both markers; they must not
+    # be picked up here, non-GPU SNP tests pin to this host during opt-in runs).
     local crn_state_dir
     for crn_state_dir in "$LOCAL_DIR"/crn/*/; do
         if [ -f "$crn_state_dir/confidential" ] && [ ! -f "$crn_state_dir/gpu" ] \
-            && [ -f "$crn_state_dir/droplet-ip" ]; then
+            && [ ! -f "$crn_state_dir/tdx" ] && [ -f "$crn_state_dir/droplet-ip" ]; then
             export ALEPH_TESTNET_CONFIDENTIAL_CRN_HOST="$(cat "$crn_state_dir/droplet-ip")"
             if [ -f "$crn_state_dir/crn-hash" ]; then
                 export ALEPH_TESTNET_CONFIDENTIAL_CRN_HASH="$(cat "$crn_state_dir/crn-hash")"
@@ -279,6 +279,13 @@ run_tests() {
     for crn_state_dir in "$LOCAL_DIR"/crn/*/; do
         if [ -f "$crn_state_dir/gpu" ] && [ -f "$crn_state_dir/droplet-ip" ]; then
             export ALEPH_TESTNET_NVIDIA_CC_CRN_HOST="$(cat "$crn_state_dir/droplet-ip")"
+            break
+        fi
+    done
+    # Intel TDX host: first CRN state dir carrying the `tdx` marker (opt-in runs only).
+    for crn_state_dir in "$LOCAL_DIR"/crn/*/; do
+        if [ -f "$crn_state_dir/tdx" ] && [ -f "$crn_state_dir/droplet-ip" ]; then
+            export ALEPH_TESTNET_TDX_CRN_HOST="$(cat "$crn_state_dir/droplet-ip")"
             break
         fi
     done

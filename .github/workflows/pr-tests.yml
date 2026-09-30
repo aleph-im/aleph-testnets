@@ -9,6 +9,10 @@ on:
         description: "Add the NVIDIA CC host as a second static confidential CRN"
         type: boolean
         default: false
+      tdx:
+        description: "Add the Intel TDX host as a static confidential CRN"
+        type: boolean
+        default: false
       aleph_vm_branch:
         description: "Deploy aleph-vm from this branch instead of the manifesto pin"
         type: string
@@ -37,7 +41,7 @@ jobs:
     # bundle download on the TEE server) push the suite past the old 60.
     # GPU runs add a 229 MB bundle upload, a GPU guest boot and a 900s
     # create wait on top of that.
-    timeout-minutes: ${{ inputs.gpu == true && 110 || 75 }}
+    timeout-minutes: ${{ (inputs.gpu == true || inputs.tdx == true) && 110 || 75 }}
     environment: digitalocean
     # Serialize across ALL runs (not just per-PR): the static TEE server can
     # only host one CI run at a time. Caveat: GitHub keeps a single pending
@@ -54,13 +58,24 @@ jobs:
         run: |
           # inputs.gpu is unset (empty) on pull_request events, so this
           # defaults to false there and on a dispatch without gpu=true.
+          # Static hosts take the indices after the droplets: the TEE
+          # server always, then the opt-in GPU and TDX hosts in that order.
+          count=$((DO_CRN_COUNT + 1))
           if [ "${{ inputs.gpu }}" = "true" ]; then
             echo "GPU_RUN=true" >> "$GITHUB_ENV"
-            echo "CRN_COUNT=$((DO_CRN_COUNT + 2))" >> "$GITHUB_ENV"
+            echo "GPU_IDX=$count" >> "$GITHUB_ENV"
+            count=$((count + 1))
           else
             echo "GPU_RUN=false" >> "$GITHUB_ENV"
-            echo "CRN_COUNT=$((DO_CRN_COUNT + 1))" >> "$GITHUB_ENV"
           fi
+          if [ "${{ inputs.tdx }}" = "true" ]; then
+            echo "TDX_RUN=true" >> "$GITHUB_ENV"
+            echo "TDX_IDX=$count" >> "$GITHUB_ENV"
+            count=$((count + 1))
+          else
+            echo "TDX_RUN=false" >> "$GITHUB_ENV"
+          fi
+          echo "CRN_COUNT=$count" >> "$GITHUB_ENV"
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -179,6 +194,10 @@ jobs:
           if [ "$GPU_RUN" = "true" ]; then
             ssh-keyscan -H "${{ secrets.NVIDIA_CC_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
             ssh -o BatchMode=yes "${{ secrets.NVIDIA_CC_USER }}@${{ secrets.NVIDIA_CC_HOST }}" true
+          fi
+          if [ "$TDX_RUN" = "true" ]; then
+            ssh-keyscan -H "${{ secrets.TDX_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+            ssh -o BatchMode=yes "${{ secrets.TDX_USER }}@${{ secrets.TDX_HOST }}" true
           fi
 
       - name: Install system dependencies (CCN + CRN in parallel)
@@ -303,12 +322,22 @@ jobs:
           # confidential shape as the TEE server, plus a gpu marker so
           # crn-up.sh enables GPU support and its own IPv6 pool override.
           if [ "$GPU_RUN" = "true" ]; then
-            GPU_IDX=$((DO_CRN_COUNT + 1))
             ssh root@${DROPLET_IPV4} "mkdir -p /opt/aleph-testnets/.local/crn/${GPU_IDX}"
             ssh root@${DROPLET_IPV4} "echo 'nvidia-cc-server' > /opt/aleph-testnets/.local/crn/${GPU_IDX}/droplet-name"
             ssh root@${DROPLET_IPV4} "echo '${{ secrets.NVIDIA_CC_HOST }}' > /opt/aleph-testnets/.local/crn/${GPU_IDX}/droplet-ip"
             ssh root@${DROPLET_IPV4} "echo '${{ secrets.NVIDIA_CC_USER }}' > /opt/aleph-testnets/.local/crn/${GPU_IDX}/ssh-user"
             ssh root@${DROPLET_IPV4} "touch /opt/aleph-testnets/.local/crn/${GPU_IDX}/static /opt/aleph-testnets/.local/crn/${GPU_IDX}/confidential /opt/aleph-testnets/.local/crn/${GPU_IDX}/gpu"
+          fi
+
+          # Opt-in Intel TDX host: static + confidential like the TEE server,
+          # plus a tdx marker so crn-up.sh enables QEMU support and its own
+          # IPv6 pool override (no global IPv6 of its own either).
+          if [ "$TDX_RUN" = "true" ]; then
+            ssh root@${DROPLET_IPV4} "mkdir -p /opt/aleph-testnets/.local/crn/${TDX_IDX}"
+            ssh root@${DROPLET_IPV4} "echo 'intel-tdx-server' > /opt/aleph-testnets/.local/crn/${TDX_IDX}/droplet-name"
+            ssh root@${DROPLET_IPV4} "echo '${{ secrets.TDX_HOST }}' > /opt/aleph-testnets/.local/crn/${TDX_IDX}/droplet-ip"
+            ssh root@${DROPLET_IPV4} "echo '${{ secrets.TDX_USER }}' > /opt/aleph-testnets/.local/crn/${TDX_IDX}/ssh-user"
+            ssh root@${DROPLET_IPV4} "touch /opt/aleph-testnets/.local/crn/${TDX_IDX}/static /opt/aleph-testnets/.local/crn/${TDX_IDX}/confidential /opt/aleph-testnets/.local/crn/${TDX_IDX}/tdx"
           fi
 
           # Copy SSH key to CCN droplet so it can reach the CRNs
@@ -332,6 +361,7 @@ jobs:
             CRN_COUNT=${CRN_COUNT} \
             STATIC_CRN_IPV6_POOL='${{ vars.AMD_SEV_SNP_IPV6_POOL }}' \
             GPU_CRN_IPV6_POOL='${{ vars.NVIDIA_CC_IPV6_POOL }}' \
+            TDX_CRN_IPV6_POOL='${{ vars.TDX_IPV6_POOL }}' \
             ALEPH_VM_BRANCH='${{ inputs.aleph_vm_branch }}' \
             GH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             bash scripts/crn-up.sh --install"
@@ -361,9 +391,11 @@ jobs:
           # vprogram-fixtures release; tests/test_vprograms.py skips when
           # .local/vprogram is absent (local-up.sh exports its path).
           # --gpu also fetches the CUDA V-PROGRAM fixtures for the opt-in run.
-          gpu_flag=""
-          if [ "$GPU_RUN" = "true" ]; then gpu_flag="--gpu"; fi
-          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/vprogram-artifacts.sh ${gpu_flag:+"$gpu_flag"}"
+          # --tdx likewise fetches the TDX runtime for the opt-in TDX run.
+          flags=""
+          if [ "$GPU_RUN" = "true" ]; then flags="$flags --gpu"; fi
+          if [ "$TDX_RUN" = "true" ]; then flags="$flags --tdx"; fi
+          ssh root@${DROPLET_IPV4} "cd /opt/aleph-testnets && bash scripts/vprogram-artifacts.sh $flags"
 
       - name: Run tests
         run: |
@@ -422,6 +454,18 @@ jobs:
           $SSH "${SUDO}journalctl -u aleph-vm-supervisor.service --no-pager --since '$since'" > gpu-supervisor.txt 2>&1 || true
           $SSH "${SUDO}journalctl -u aleph-vm-agent.service --no-pager --since '$since'" > gpu-agent.txt 2>&1 || true
           $SSH "${SUDO}journalctl -u 'aleph-vm-controller@*' --no-pager --since '$since'" > gpu-controllers.txt 2>&1 || true
+
+      - name: Collect Intel TDX host logs
+        if: always() && env.TDX_RUN == 'true'
+        run: |
+          TDX_HOST="${{ secrets.TDX_HOST }}"
+          TDX_USER="${{ secrets.TDX_USER }}"
+          since="45 min ago"
+          if [ "$TDX_USER" = "root" ]; then SSH="ssh root@$TDX_HOST"; SUDO=""; else SSH="ssh $TDX_USER@$TDX_HOST"; SUDO="sudo -n "; fi
+          $SSH "${SUDO}journalctl -u aleph-vm-supervisor.service --no-pager --since '$since'" > tdx-supervisor.txt 2>&1 || true
+          $SSH "${SUDO}journalctl -u aleph-vm-agent.service --no-pager --since '$since'" > tdx-agent.txt 2>&1 || true
+          $SSH "${SUDO}journalctl -u 'aleph-vm-controller@*' --no-pager --since '$since'" > tdx-controllers.txt 2>&1 || true
+          $SSH "${SUDO}journalctl -u qgsd --no-pager --since '$since'" > tdx-qgs.txt 2>&1 || true
 
       - name: Collect TEE network diagnostics
         if: always()
@@ -532,6 +576,10 @@ jobs:
             gpu-supervisor.txt
             gpu-agent.txt
             gpu-controllers.txt
+            tdx-supervisor.txt
+            tdx-agent.txt
+            tdx-controllers.txt
+            tdx-qgs.txt
 
       - name: Reset TEE server
         if: always()
@@ -542,6 +590,11 @@ jobs:
         if: always() && env.GPU_RUN == 'true'
         run: |
           bash scripts/tee-reset.sh "${{ secrets.NVIDIA_CC_HOST }}" "${{ secrets.NVIDIA_CC_USER }}" ~/.ssh/id_ed25519 || true
+
+      - name: Reset Intel TDX host
+        if: always() && env.TDX_RUN == 'true'
+        run: |
+          bash scripts/tee-reset.sh "${{ secrets.TDX_HOST }}" "${{ secrets.TDX_USER }}" ~/.ssh/id_ed25519 || true
 
       - name: Destroy CRN Droplets
         if: always()

@@ -45,13 +45,15 @@ def test_tdx_vprogram_deploy_and_attested_call(
     assert result.returncode == 0, f"vprogram create (tdx) failed: {(result.stderr or '')[-1000:]}"
 
     objs = _parse_json_stream(result.stdout)
-    message = _vprogram_message(objs)
-    item_hash = message["item_hash"]
-    verification = json.loads(message["item_content"])["verification"]
-    assert verification["backend"] == "tdx", verification
-    assert "policy" not in verification, "a tdx block carries no launch policy"
-    assert len(verification["measurements"]) == 1, verification
-    registers = verification["measurements"][0]["registers"]
+    item_hash = _vprogram_message(objs)["item_hash"]
+
+    # The message the CCN accepted: one tdx measurement pinning the four
+    # registers (the receipt carries no content; `show` renders it).
+    shown = aleph_cli("vprogram", "show", item_hash, parse_json=True)
+    assert len(shown["measurements"]) == 1, shown["measurements"]
+    measurement = shown["measurements"][0]
+    assert measurement["platform"] == "tdx", measurement
+    registers = measurement["registers"]
     assert set(registers) == {"mrtd", "rtmr1", "rtmr2", "mrconfigid"}, registers
 
     ready = objs[-1]
@@ -70,7 +72,6 @@ def test_tdx_vprogram_deploy_and_attested_call(
     )
 
     shown = aleph_cli("vprogram", "show", item_hash, parse_json=True)
-    assert shown["measurements"], "no measurements pinned on the message"
     assert shown["running"] is True, f"CRN does not report the VM as active: {shown}"
 
     # Attested calls: the body is only printed after the quote verified

@@ -35,15 +35,15 @@ components:
 
   scheduler-rs:
     image: alephim/scheduler-rs
-    # 0.2.3-rc1 (2026-09-30): 0.2.2 plus confidential GPUs on SEV-SNP
-    # instances (scheduler#216) and Intel TDX V-PROGRAM placement on CRNs
-    # advertising tee.tdx (#217, SDK pinned at a tdx-aware manifest reader).
-    tag: "0.2.3-rc1"
+    # 0.2.4-rc0 (2026-10-15): 0.2.3 plus Intel TDX V-PROGRAM placement on
+    # CRNs advertising tee.tdx (#217, SDK pinned at the aleph-rs tdx stack
+    # tip 5f5c3e4, on 0.22.0).
+    tag: "0.2.4-rc0"
 
   scheduler-api:
     image: alephim/scheduler-api
-    # Same 0.2.3-rc1 release as scheduler-rs above.
-    tag: "0.2.3-rc1"
+    # Same 0.2.4-rc0 release as scheduler-rs above.
+    tag: "0.2.4-rc0"
 
   aleph-vm:
     # 2.1.0 (2026-09-15, tag = main 3579c430, the build the last green run

@@ -45,7 +45,7 @@ ALEPH_STORAGE_URL="https://official.aleph.cloud/api/v0/storage/raw"
 ALEPH_IPFS_URL="https://ipfs.aleph.cloud/ipfs"
 FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-3"
 GPU_FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-gpu-3"
-TDX_FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-tdx-1"
+TDX_FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-tdx-2"
 
 GPU=0
 TDX=0
@@ -88,8 +88,8 @@ fi
 # run: the same fib-service workload on a `platform: "tdx"` runtime (TDVF in
 # the OVMF.fd slot, the register triple published as `measurements`).
 if [ "$TDX" = "1" ]; then
-    CHECKSUMS[tdx-image.tar.gz]="b62bb12c969cfd1f355446842b75009e50250d141e7a83d0df4567154815b595"
-    CHECKSUMS[tdx-manifest-template.json]="d487f241c67698fc40ef9d5e9b6abc8896641489f71d2ae8b079457e2079f89e"
+    CHECKSUMS[tdx-image.tar.gz]="234e9cc2bd6d1a79204099eda4c3bce945bd66f43fcacd020e949935565b2668"
+    CHECKSUMS[tdx-manifest-template.json]="44968aec5ba80c7e5cdfa1e1a6007346cfe7c55c79d0b2636967af831797a671"
     SOURCES[tdx-image.tar.gz]="$TDX_FIXTURES_URL/tdx-image.tar.gz"
     SOURCES[tdx-manifest-template.json]="$TDX_FIXTURES_URL/tdx-manifest-template.json"
 fi

@@ -337,22 +337,36 @@ def nvidia_cc_crn_host() -> str:
 
 
 @pytest.fixture(scope="session")
+def tdx_crn_host() -> str:
+    """Address of the opt-in Intel TDX host. tests/test_vprograms_tdx.py
+    skips without it (only set on TDX-flagged CI runs)."""
+    host = os.environ.get("ALEPH_TESTNET_TDX_CRN_HOST", "")
+    if not host:
+        pytest.skip("No Intel TDX host, requires ALEPH_TESTNET_TDX_CRN_HOST")
+    return host
+
+
+@pytest.fixture(scope="session")
 def tee_pin_args() -> tuple:
-    """`--crn` pin args for non-GPU confidential tests during a GPU run.
+    """`--crn` pin args for the SNP confidential tests during an opt-in run.
 
     Only the TEE server has the artifacts, routed IPv6 /64 and TCB override
-    flags these tests depend on; once the GPU host reports confidential
-    capability, the scheduler is free to place them there instead. Splat
-    into the create command. Empty when ALEPH_TESTNET_NVIDIA_CC_CRN_HOST is
-    unset, so default runs test plain scheduler matching, unpinned.
+    flags these tests depend on; once another host reports confidential
+    capability (the GPU host, or the TDX host for SNP instances), the
+    scheduler is free to place them there instead. Splat into the create
+    command. Empty when neither opt-in host is set, so default runs test
+    plain scheduler matching, unpinned.
     """
-    if not os.environ.get("ALEPH_TESTNET_NVIDIA_CC_CRN_HOST"):
+    if not (
+        os.environ.get("ALEPH_TESTNET_NVIDIA_CC_CRN_HOST")
+        or os.environ.get("ALEPH_TESTNET_TDX_CRN_HOST")
+    ):
         return ()
     crn_hash = os.environ.get("ALEPH_TESTNET_CONFIDENTIAL_CRN_HASH", "")
     if not crn_hash:
         pytest.fail(
-            "ALEPH_TESTNET_NVIDIA_CC_CRN_HOST is set but "
-            "ALEPH_TESTNET_CONFIDENTIAL_CRN_HASH is not set, so non-GPU "
+            "an opt-in confidential host is set but "
+            "ALEPH_TESTNET_CONFIDENTIAL_CRN_HASH is not set, so the SNP "
             "confidential tests cannot be pinned to the TEE server"
         )
     return ("--crn", crn_hash)
@@ -589,6 +603,18 @@ def vprogram_gpu_runtime_hash(nvidia_cc_crn_host, aleph_cli, vprogram_dir, tmp_p
         aleph_cli, vprogram_dir, tmp_path_factory,
         "gpu-snp-image.tar.gz", "gpu-manifest-template.json", "vprogram-gpu",
         "V-PROGRAM GPU runtime", bundle_timeout=600,
+    )
+
+
+@pytest.fixture(scope="session")
+def vprogram_tdx_runtime_hash(tdx_crn_host, aleph_cli, vprogram_dir, tmp_path_factory) -> str:
+    """Same two-step upload as vprogram_runtime_hash, for the Intel TDX
+    runtime bundle (tdx-image.tar.gz + tdx-manifest-template.json). Depends
+    on tdx_crn_host so default runs skip before any upload."""
+    return _upload_vprogram_runtime(
+        aleph_cli, vprogram_dir, tmp_path_factory,
+        "tdx-image.tar.gz", "tdx-manifest-template.json", "vprogram-tdx",
+        "V-PROGRAM TDX runtime",
     )
 
 

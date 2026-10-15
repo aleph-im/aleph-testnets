@@ -27,7 +27,8 @@
 #                               (workload contract aleph.compose/1), bundle.ref
 #                               patched per-run like the vprogram one
 #
-# With --gpu (or VPROGRAM_GPU=1), also fetches the GPU fixtures:
+# With --gpu (or VPROGRAM_GPU=1), also fetches the GPU fixtures (and --tdx
+# the Intel TDX runtime, see below):
 #   6. gpu-snp-image.tar.gz: runtime bundle for the CUDA V-PROGRAM
 #   7. gpu-manifest-template.json: its manifest, bundle.ref patched per-run
 #   8. cuda-workload.ext4: cuda-probe workload volume
@@ -44,14 +45,18 @@ ALEPH_STORAGE_URL="https://official.aleph.cloud/api/v0/storage/raw"
 ALEPH_IPFS_URL="https://ipfs.aleph.cloud/ipfs"
 FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-3"
 GPU_FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-gpu-3"
+TDX_FIXTURES_URL="https://github.com/aleph-im/aleph-testnets/releases/download/vprogram-fixtures-tdx-2"
 
 GPU=0
+TDX=0
 for arg in "$@"; do
     case "$arg" in
         --gpu) GPU=1 ;;
+        --tdx) TDX=1 ;;
     esac
 done
 if [ "${VPROGRAM_GPU:-0}" = "1" ]; then GPU=1; fi
+if [ "${VPROGRAM_TDX:-0}" = "1" ]; then TDX=1; fi
 
 # sha256 of every fixture; native-storage assets are fetched from Aleph
 # storage by this same hash, the IPFS-hosted compose bundle by its CID.
@@ -77,6 +82,16 @@ if [ "$GPU" = "1" ]; then
     SOURCES[gpu-snp-image.tar.gz]="$GPU_FIXTURES_URL/gpu-snp-image.tar.gz"
     SOURCES[gpu-manifest-template.json]="$GPU_FIXTURES_URL/gpu-manifest-template.json"
     SOURCES[cuda-workload.ext4]="$GPU_FIXTURES_URL/cuda-workload.ext4"
+fi
+
+# With --tdx (or VPROGRAM_TDX=1), the Intel TDX runtime for the opt-in TDX
+# run: the same fib-service workload on a `platform: "tdx"` runtime (TDVF in
+# the OVMF.fd slot, the register triple published as `measurements`).
+if [ "$TDX" = "1" ]; then
+    CHECKSUMS[tdx-image.tar.gz]="234e9cc2bd6d1a79204099eda4c3bce945bd66f43fcacd020e949935565b2668"
+    CHECKSUMS[tdx-manifest-template.json]="44968aec5ba80c7e5cdfa1e1a6007346cfe7c55c79d0b2636967af831797a671"
+    SOURCES[tdx-image.tar.gz]="$TDX_FIXTURES_URL/tdx-image.tar.gz"
+    SOURCES[tdx-manifest-template.json]="$TDX_FIXTURES_URL/tdx-manifest-template.json"
 fi
 
 mkdir -p "$OUT_DIR"

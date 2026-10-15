@@ -185,6 +185,9 @@ crn_name() {
 #   confidential   Enable confidential computing (AMD SEV) in supervisor.env.
 #   gpu            Enable GPU passthrough in supervisor.env; uses
 #                  GPU_CRN_IPV6_POOL instead of STATIC_CRN_IPV6_POOL.
+#   tdx            Intel TDX host: enable QEMU support in supervisor.env
+#                  (the daemon's TDX probe stands in for the AMD gates);
+#                  uses TDX_CRN_IPV6_POOL.
 crn_ssh_user() {
     local f
     f="$(crn_dir "$1")/ssh-user"
@@ -201,6 +204,10 @@ crn_is_confidential() {
 
 crn_is_gpu() {
     [ -f "$(crn_dir "$1")/gpu" ]
+}
+
+crn_is_tdx() {
+    [ -f "$(crn_dir "$1")/tdx" ]
 }
 
 # Fresh droplets intermittently reset SSH connections mid-handshake
@@ -420,6 +427,8 @@ EOF
         local ipv6_override=""
         if crn_is_static "$idx" && crn_is_gpu "$idx"; then
             ipv6_override="${GPU_CRN_IPV6_POOL:-}"
+        elif crn_is_static "$idx" && crn_is_tdx "$idx"; then
+            ipv6_override="${TDX_CRN_IPV6_POOL:-}"
         elif crn_is_static "$idx"; then
             ipv6_override="${STATIC_CRN_IPV6_POOL:-}"
         fi
@@ -445,6 +454,9 @@ EOF
             # The run was explicitly asked to use the GPU host: an unusable
             # IPv6 setup here is an error, not a silent skip.
             echo "ERROR: GPU CRN $idx has no IPv6 pool (set GPU_CRN_IPV6_POOL) and no detected global IPv6" >&2
+            exit 1
+        elif crn_is_static "$idx" && crn_is_tdx "$idx"; then
+            echo "ERROR: TDX CRN $idx has no IPv6 pool (set TDX_CRN_IPV6_POOL) and no detected global IPv6" >&2
             exit 1
         fi
 
@@ -488,6 +500,15 @@ ALEPH_VM_ENABLE_GPU_SUPPORT=true
 ALEPH_VM_ENABLE_QEMU_SUPPORT=true
 EOF
             echo "    GPU support: enabled"
+        fi
+
+        # Intel TDX: V-PROGRAMs are QEMU launches; the confidential flag
+        # above is what advertises the TEE, the daemon probes TDX itself.
+        if crn_is_tdx "$idx"; then
+            cat >> "$env_file" <<EOF
+ALEPH_VM_ENABLE_QEMU_SUPPORT=true
+EOF
+            echo "    Intel TDX: enabled"
         fi
 
         # Copy config (via /tmp: the SSH user may not be root)
